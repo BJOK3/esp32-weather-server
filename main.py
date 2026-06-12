@@ -2,6 +2,7 @@ import datetime
 import os
 from io import BytesIO
 import urllib.parse
+from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -14,6 +15,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 app = FastAPI()
 
 AUTH_KEY = "CWA-02744568-A84E-49F7-8496-8E9D0834D8C2"
+TW_TZ = ZoneInfo("Asia/Taipei")
 
 # ================= 🗺️ 全域變數設定 =================
 CURRENT_LOCATION = {
@@ -167,7 +169,7 @@ def fetch_weather_job():
         # -----------------------------------------------------------------
         # 4. 打包數據更新快取
         # -----------------------------------------------------------------
-        now_str = datetime.datetime.now().strftime("%H:%M:%S")
+        now_str = datetime.datetime.now(TW_TZ).strftime("%H:%M:%S")
         action_advice = "OPEN"
         if pop >= 70 or rain_10m > 0.0 or radar_verdict == "DANGER" or humidity > 85 or wind_speed > 8.0:
             action_advice = "CLOSE"
