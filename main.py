@@ -1,7 +1,6 @@
 import datetime
 import os
 from io import BytesIO
-import urllib.parse
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -17,11 +16,11 @@ AUTH_KEY = "CWA-02744568-A84E-49F7-8496-8E9D0834D8C2"
 
 # ================= 🗺️ 全域變數設定 =================
 CURRENT_LOCATION = {
-    "address": "542南投縣草屯鎮富寮里中正路568號",  # 支援超精準門牌
-    "city": "南投縣",
-    "town": "草屯鎮",
-    "lon": 120.686,  # 草屯富寮里中心點經緯度預設值
-    "lat": 23.978,
+    "display_name": "南投縣草屯鎮中正路",  # 網頁與 ESP32 畫面上顯示的文字
+    "city": "南投縣",                    # 氣象署 PoP 用的縣市名稱（務必填臺或南投等完整名稱）
+    "town": "草屯鎮",                    # 氣象署過濾鄰近測站用的鄉鎮區名稱
+    "lon": 120.686,                      # 最重要的精準雷達圖經度
+    "lat": 23.978,                       # 最重要的精準雷達圖緯度
 }
 
 current_cached_status = "OPEN (PoP:0% Rain10m:0.0mm Wind:0deg Humid:0% WSpd:0.0m/s Radar:SAFE) [Initializing]"
@@ -63,9 +62,7 @@ def fetch_weather_job():
     radar_status = "SAFE"
 
     now_str = datetime.datetime.now().strftime("%H:%M:%S")
-    print(
-        f"\n⏰ [{now_str}] 排程觸發：數據同步中...【目前守護目標：{CURRENT_LOCATION['address']}】"
-    )
+    print(f"\n⏰ [{now_str}] 排程觸發：數據同步中...【目前目標：{CURRENT_LOCATION['display_name']}】")
 
     # 1. 抓取該縣市降雨機率 PoP
     try:
@@ -76,27 +73,23 @@ def fetch_weather_job():
             if elem["elementName"] == "PoP":
                 pop = int(elem["time"][0]["parameter"]["parameterName"])
                 break
-    except Exception as e:
-        print(f"抓取 PoP 失敗: {e}")
+    except:
+        pass
 
     # 2. 智慧搜尋：找出最鄰近的雨量測站
     try:
         url_rain = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-002?Authorization={AUTH_KEY}&format=JSON"
         res_rain = requests.get(url_rain, timeout=6, verify=False).json()
-        stations = res_rain["records"].get(
-            "Station", res_rain["records"].get("location", [])
-        )
+        stations = res_rain["records"].get("Station", res_rain["records"].get("location", []))
 
         min_dist = 999.0
         best_station = None
         for s in stations:
             s_city = s.get("GeoInfo", {}).get("CountyName", "")
             s_town = s.get("GeoInfo", {}).get("TownName", "")
-            # 精準匹配
             if city in s_city and town in s_town:
                 best_station = s
                 break
-            # 距離匹配
             s_lon = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLongitude", 0))
             s_lat = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLatitude", 0))
             dist = ((s_lon - target_lon) ** 2 + (s_lat - target_lat) ** 2) ** 0.5
@@ -105,22 +98,17 @@ def fetch_weather_job():
                 best_station = s
 
         if best_station:
-            rain_10m = float(
-                best_station["RainfallElement"]["Past10Min"]["Precipitation"]
-            )
+            rain_10m = float(best_station["RainfallElement"]["Past10Min"]["Precipitation"])
             if rain_10m < 0:
                 rain_10m = 0.0
-            print(f"📡 已綁定最近雨量站: {best_station.get('StationName')}")
-    except Exception as e:
-        print(f"抓取雨量站失敗: {e}")
+    except:
+        pass
 
     # 3. 智慧搜尋：找出最近的氣象觀測站（風速、濕度）
     try:
         url_wind = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={AUTH_KEY}&format=JSON"
         res_wind = requests.get(url_wind, timeout=6, verify=False).json()
-        stations = res_wind["records"].get(
-            "Station", res_wind["records"].get("location", [])
-        )
+        stations = res_wind["records"].get("Station", res_wind["records"].get("location", []))
 
         min_dist = 999.0
         best_station = None
@@ -134,24 +122,11 @@ def fetch_weather_job():
 
         if best_station:
             elem = best_station.get("WeatherElement", {})
-            wind_dir = (
-                float(elem["WindDirection"])
-                if float(elem.get("WindDirection", 0)) >= 0
-                else 0.0
-            )
-            wind_speed = (
-                float(elem["WindSpeed"])
-                if float(elem.get("WindSpeed", 0)) >= 0
-                else 0.0
-            )
-            humidity = (
-                int(elem["RelativeHumidity"])
-                if int(elem.get("RelativeHumidity", 0)) >= 0
-                else 0
-            )
-            print(f"📡 已綁定最近氣象站: {best_station.get('StationName')}")
-    except Exception as e:
-        print(f"抓取氣象站失敗: {e}")
+            wind_dir = float(elem["WindDirection"]) if float(elem.get("WindDirection", 0)) >= 0 else 0.0
+            wind_speed = float(elem["WindSpeed"]) if float(elem.get("WindSpeed", 0)) >= 0 else 0.0
+            humidity = int(elem["RelativeHumidity"]) if int(elem.get("RelativeHumidity", 0)) >= 0 else 0
+    except:
+        pass
 
     # 4. 雷達圖分析
     try:
@@ -163,11 +138,12 @@ def fetch_weather_job():
 
         px_x, px_y = lonlat_to_pixel(target_lon, target_lat)
         radar_status = check_radar_pixel(img, px_x, px_y)
-    except Exception as e:
-        print(f"雷達視覺辨識失敗: {e}")
+    except:
+        pass
 
     # ---- 🧠 智慧決策鏈 ----
-    data_metrics = f"(Loc:{city}{town} PoP:{pop}% Rain10m:{rain_10m}mm Wind:{int(wind_dir)}deg Humid:{humidity}% WSpd:{wind_speed}m/s Radar:{radar_status})"
+    # 顯示你自訂的地名，讓 ESP32 讀取時知道目前守護哪裡
+    data_metrics = f"(Loc:{CURRENT_LOCATION['display_name']} PoP:{pop}% Rain10m:{rain_10m}mm Wind:{int(wind_dir)}deg Humid:{humidity}% WSpd:{wind_speed}m/s Radar:{radar_status})"
 
     if (
         rain_10m > 0.0
@@ -180,7 +156,7 @@ def fetch_weather_job():
         current_cached_status = f"CLOSE {data_metrics}"
     else:
         current_cached_status = f"OPEN {data_metrics}"
-    print(f"✅ 數據更新完成！當前快取狀態: {current_cached_status}")
+    print(f"✅ 數據更新完成！快取狀態: {current_cached_status}")
 
 
 scheduler = BackgroundScheduler()
@@ -189,39 +165,57 @@ scheduler.start()
 fetch_weather_job()
 
 
-# ================= 🌐 網頁前端 UI (極簡化：只留地址欄位) =================
+# ================= 🌐 網頁前端 UI (經緯度直接貼上版) =================
 @app.get("/", response_class=HTMLResponse)
 def get_home_page():
     html_content = f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>智慧衣架門牌定位控制台</title>
+        <title>智慧衣架座標設定控制台</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{ font-family: Arial, sans-serif; text-align: center; background-color: #f0f4f8; padding: 20px; }}
             .card {{ background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; text-align: left; }}
             .form-group {{ margin-bottom: 15px; }}
-            label {{ font-weight: bold; display: block; margin-bottom: 8px; color: #333; }}
-            input {{ width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 15px; }}
-            button {{ background-color: #007bff; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; margin-top: 5px; }}
-            button:hover {{ background-color: #0056b3; }}
+            label {{ font-weight: bold; display: block; margin-bottom: 6px; color: #333; font-size: 14px; }}
+            input, select {{ width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 14px; }}
+            button {{ background-color: #28a745; color: white; border: none; padding: 12px; font-size: 16px; border-radius: 6px; cursor: pointer; width: 100%; font-weight: bold; margin-top: 5px; }}
+            button:hover {{ background-color: #218838; }}
             .status-box {{ background: #e9ecef; padding: 12px; border-radius: 8px; margin-top: 15px; font-family: monospace; font-size: 13px; line-height: 1.4; word-break: break-all; }}
+            .hint {{ font-size: 12px; color: #666; margin-top: 3px; display: block; }}
         </style>
     </head>
     <body>
         <div class="card">
-            <h2 style="text-align: center; color: #007bff; margin-top: 0;">衣架精準守護區域 🌍</h2>
-            <p style="font-size: 14px; color: #666; text-align: center;">輸入完整精準門牌地址，系統會利用地理編碼自動鎖定該棟建築的雷達圖像素座標與最鄰近測站。</p>
+            <h2 style="text-align: center; color: #007bff; margin-top: 0;">智慧衣架精準設定 🌍</h2>
+            <p style="font-size: 13px; color: #666; text-align: center; margin-bottom: 20px;">免除地名解析錯誤！直接填入氣象分區與 Google 地圖經緯度，達到 100% 準確率。</p>
             
             <div class="form-group">
-                <label>📍 請輸入完整安裝地址</label>
-                <input type="text" id="addressInput" value="{CURRENT_LOCATION['address']}" placeholder="例如：542南投縣草屯鎮富寮里中正路568號">
+                <label>1. 衣架顯示地名 (自由填寫，顯示在 ESP32 畫面上)</label>
+                <input type="text" id="nameInput" value="{CURRENT_LOCATION['display_name']}" placeholder="例如：草屯富寮里家">
             </div>
 
-            <button onclick="updateAddress()">💾 儲存門牌並立即同步</button>
+            <div style="display: flex; gap: 10px;">
+                <div class="form-group" style="flex: 1;">
+                    <label>2. 縣市(PoP用)</label>
+                    <input type="text" id="cityInput" value="{CURRENT_LOCATION['city']}" placeholder="例如：南投縣">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>3. 鄉鎮(測站用)</label>
+                    <input type="text" id="townInput" value="{CURRENT_LOCATION['town']}" placeholder="例如：草屯鎮">
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label>4. Google 地圖經緯度座標</label>
+                <input type="text" id="latlonInput" value="{CURRENT_LOCATION['lat']},{CURRENT_LOCATION['lon']}" placeholder="例如：23.978,120.686">
+                <span class="hint">💡 提示：在手機 Google 地圖上長按你家建築物，複製最上方彈出的那一串「緯度,經度」數字，直接貼在這一格即可！</span>
+            </div>
+
+            <button onclick="saveSettings()">💾 儲存設定並立即同步</button>
             
-            <h3 style="margin-top: 20px; margin-bottom: 5px; font-size: 15px;">📡 目前衣架同步狀態：</h3>
+            <h3 style="margin-top: 20px; margin-bottom: 5px; font-size: 14px;">📡 目前衣架同步狀態：</h3>
             <div class="status-box" id="statusBox">載入中...</div>
         </div>
 
@@ -236,27 +230,35 @@ def get_home_page():
             setInterval(refreshStatus, 4000);
             refreshStatus();
 
-            function updateAddress() {{
-                var addr = document.getElementById("addressInput").value.trim();
-                if(!addr) {{
-                    alert("地址不能為空！");
+            function saveSettings() {{
+                var name = document.getElementById("nameInput").value.trim();
+                var city = document.getElementById("cityInput").value.trim();
+                var town = document.getElementById("townInput").value.trim();
+                var latlon = document.getElementById("latlonInput").value.trim();
+                
+                if(!name || !city || !town || !latlon) {{
+                    alert("所有欄位均為必填！");
                     return;
                 }}
-                document.getElementById("statusBox").innerText = "⏳ 正在分析精準門牌之 GPS 座標...";
 
-                fetch(`/api/set_address?address=${{encodeURIComponent(addr)}}`)
+                // 拆分經緯度
+                var parts = latlon.split(",");
+                if(parts.length !== 2) {{
+                    alert("經緯度格式錯誤！請確保格式為：緯度,經度 (例如: 23.978,120.686)");
+                    return;
+                }}
+                var lat = parts[0].trim();
+                var lon = parts[1].trim();
+
+                document.getElementById("statusBox").innerText = "⏳ 正在同步更新氣象測站與雷達像素...";
+
+                fetch(`/api/set_precise?name=${{encodeURIComponent(name)}}&city=${{encodeURIComponent(city)}}&town=${{encodeURIComponent(town)}}&lat=${{lat}}&lon=${{lon}}`)
                     .then(res => res.json())
                     .then(data => {{
                         if(data.status === "SUCCESS") {{
-                            alert(`🎉 門牌解碼成功！\\n鎖定區域：${{data.city}}${{data.town}}\\n座標：(${{data.lon}}, ${{data.lat}})`);
-                            refreshStatus();
-                        }} else {{
-                            alert("❌ 無法辨識此地址，請確認縣市與道路名稱是否正確。");
+                            alert(`🎉 設定儲存成功！\\n目前守護區域：${{data.name}}\\n經緯度：(${{data.lon}}, ${{data.lat}})`);
                             refreshStatus();
                         }}
-                    }})
-                    .catch(err => {{
-                        alert("連線後端伺服器失敗");
                     }});
             }}
         </script>
@@ -266,91 +268,29 @@ def get_home_page():
     return HTMLResponse(content=html_content, status_code=200)
 
 
-# ================= 🌐 🆕 智能防錯升級：結構化地理編碼 API =================
-@app.get("/api/set_address")
-def set_address(address: str):
+# ================= 🌐 🆕 新增：直接寫入精準座標的 API =================
+@app.get("/api/set_precise")
+def set_precise(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
-    try:
-        headers = {"User-Agent": "SmartHangerApp/2.5 (contact: test@example.com)"}
-        
-        # 1. 先用原本使用者輸入的精準地址去搜尋
-        geocode_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(address)}&format=json&addressdetails=1&limit=1"
-        res = requests.get(geocode_url, headers=headers, timeout=5).json()
+    
+    if city.startswith("台"):
+        city = "臺" + city[1:]
 
-        # 🧠 2. 智能防錯機制：如果因為「號碼太精準」導致 OpenStreetMap 找不到...
-        if not res or len(res) == 0:
-            print(f"🔍 精準門牌找不到，啟動自動降級模糊搜尋...")
-            
-            # 削掉「XX號」或「XX號XX樓」再搜一次
-            fallback_address = address
-            for keyword in ["號", "樓"]:
-                if keyword in fallback_address:
-                    # 找到最後一個數字開頭到號結尾的位置切掉
-                    idx = fallback_address.find(keyword)
-                    while idx > 0 and fallback_address[idx-1].isdigit():
-                        idx -= 1
-                    fallback_address = fallback_address[:idx]
-                    break
-            
-            # 如果連郵遞區號（3或5碼數字）也造成干擾，把最前面的數字拔掉
-            if fallback_address and fallback_address[0].isdigit():
-                fallback_address = "".join([c for c in fallback_address if not c.isdigit()])
+    CURRENT_LOCATION["display_name"] = name
+    CURRENT_LOCATION["city"] = city
+    CURRENT_LOCATION["town"] = town
+    CURRENT_LOCATION["lat"] = lat
+    CURRENT_LOCATION["lon"] = lon
 
-            print(f"👉 嘗試使用模糊地址搜尋: {fallback_address}")
-            geocode_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(fallback_address)}&format=json&addressdetails=1&limit=1"
-            res = requests.get(geocode_url, headers=headers, timeout=5).json()
+    # 強制手動刷新背景天氣 job
+    fetch_weather_job()
 
-        # 3. 解析最終找到的結果
-        if res and len(res) > 0:
-            lon = float(res[0]["lon"])
-            lat = float(res[0]["lat"])
-            addr_details = res[0].get("address", {})
-
-            # 提取縣市
-            city = addr_details.get("county", "") or addr_details.get("city", "") or addr_details.get("state", "")
-            # 提取鄉鎮區
-            town = addr_details.get("town", "") or addr_details.get("suburb", "") or addr_details.get("city_district", "")
-
-            # 🛠️ 萬一地圖回傳非結構化資料，使用中文保底機制
-            if not city or ("縣" not in city and "市" not in city):
-                for k in ["南投縣", "臺中市", "彰化縣", "臺北市", "新北市", "高雄市"]:
-                    if k[:2] in address:
-                        city = k
-                        break
-                if not city: city = address[:3]
-                
-            if not town:
-                for kw in ["鎮", "鄉", "區", "市"]:
-                    if kw in address:
-                        start = address.find(city) + len(city) if city in address else 0
-                        idx = address.find(kw, start)
-                        town = address[max(0, idx - 2) : idx + 1]
-                        break
-
-            if city.startswith("台"):
-                city = "臺" + city[1:]
-
-            # 成功更新全域變數
-            CURRENT_LOCATION["address"] = address
-            CURRENT_LOCATION["city"] = city
-            CURRENT_LOCATION["town"] = town
-            CURRENT_LOCATION["lon"] = lon
-            CURRENT_LOCATION["lat"] = lat
-
-            # 讓背景天氣排程立刻刷新
-            fetch_weather_job()
-
-            return {
-                "status": "SUCCESS",
-                "city": city,
-                "town": town,
-                "lon": lon,
-                "lat": lat
-            }
-        else:
-            return {"status": "FAILED", "message": "即使模糊搜尋也找不到此區域，請檢查地名拼字"}
-    except Exception as e:
-        return {"status": "ERROR", "message": str(e)}
+    return {
+        "status": "SUCCESS",
+        "name": name,
+        "lon": lon,
+        "lat": lat
+    }
 
 
 # ================= 原本開放給 ESP32 的 API 路徑 =================
