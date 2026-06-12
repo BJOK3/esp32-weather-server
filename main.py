@@ -205,6 +205,13 @@ def get_home_page():
         <title>智慧衣架無線控制台</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
+            button {
+            /* 防止選取文字 */
+            -webkit-user-select: none; 
+            user-select: none;
+            /* 防止長按出現系統選單 */
+            -webkit-touch-callout: none;
+            touch-action: manipulation;}
             body { font-family: Arial, sans-serif; text-align: center; background-color: #f0f4f8; padding: 20px; }
             .card { background: white; padding: 25px; border-radius: 15px; box-shadow: 0 4px 10px rgba(0,0,0,0.1); max-width: 420px; margin: 0 auto; text-align: left; }
             .form-group { margin-bottom: 15px; }
@@ -242,11 +249,15 @@ def get_home_page():
                 <div style="display: flex; gap: 10px;">
                     <button class="btn-ctrl btn-close-hang" 
                             onmousedown="startHold('CLOSE')" onmouseup="stopHold()" onmouseleave="stopHold()"
-                            ontouchstart="startHold('CLOSE')" ontouchend="stopHold()">🔼 遠端收衣</button>
+                            ontouchstart="startHold('CLOSE')" ontouchend="stopHold()">
+                        🔼 遠端收衣
+                    </button>
+
                     <button class="btn-ctrl btn-open-hang" 
                             onmousedown="startHold('OPEN')" onmouseup="stopHold()" onmouseleave="stopHold()"
-                            ontouchstart="startHold('OPEN')" ontouchend="stopHold()">🔽 遠端展開</button>
-                    <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
+                            ontouchstart="startHold('OPEN')" ontouchend="stopHold()">
+                        🔽 遠端展開
+                    </button>
                 </div>
                 <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
             </div>
@@ -401,6 +412,28 @@ def get_home_page():
                             });
                     });
                 }
+            }
+            // 新增這兩個變數來控制發送邏輯
+            let holdTimer = null;
+
+            function startHold(cmd) {
+                // 當按住時，立即發送指令
+                sendControl(cmd);
+            }
+
+            function stopHold() {
+                // 當放開時，發送 STOP 指令
+                sendControl('STOP');
+            }
+
+            // 這是你原本就有的，用來發送 API 指令
+            function sendControl(cmd) {
+                fetch(`/api/remote_control?cmd=${cmd}`)
+                    .then(res => res.json())
+                    .then(data => { 
+                        console.log("指令發送成功:", cmd);
+                        refreshStatus(); 
+                    });
             }
 
             function saveManualSettings() {
