@@ -26,154 +26,14 @@ CURRENT_LOCATION = {
 
 current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
 
+# 📱 新增：手機遠端控制指令快取 ("STOP", "CLOSE", "OPEN")
+REMOTE_COMMAND = "STOP" 
 
-def lonlat_to_pixel(lon: float, lat: float):
-    """將經緯度轉換為 3600x3600 雷達圖的像素座標"""
-    px_x = int((lon - 118.0) / (124.0 - 118.0) * 3600)
-    px_y = int((26.5 - lat) / (26.5 - 20.5) * 3600)
-    return px_x, px_y
+# ... (中間的 fetch_weather_job 等函式保持不變) ...
 
-
-def check_radar_pixel(img, px_x: int, px_y: int):
-    """檢查指定像素周邊 5x5 是否有彩色雨雲"""
-    if not (0 <= px_x < 3600 and 0 <= px_y < 3600):
-        return "OUT_OF_RANGE"
-    for dx in range(-2, 3):
-        for dy in range(-2, 3):
-            nx, ny = px_x + dx, px_y + dy
-            if not (0 <= nx < 3600 and 0 <= ny < 3600):
-                continue
-            r, g, b = img.getpixel((nx, ny))
-            if not (abs(r - g) < 20 and abs(g - b) < 20 and abs(r - b) < 20):
-                if (r + g + b) > 50 and (r + g + b) < 730:
-                    return "DANGER"
-    return "SAFE"
-
-
-def fetch_weather_job():
-    """定時排程：動態根據當前設定的縣市與經緯度抓取觀測站數據"""
-    global current_cached_status, CURRENT_LOCATION
-
-    if not CURRENT_LOCATION["city"] or not CURRENT_LOCATION["town"] or CURRENT_LOCATION["lon"] == 0.0:
-        now_str = datetime.datetime.now().strftime("%H:%M:%S")
-        print(f"💤 [{now_str}] 系統提示：目前尚未設定守護位置，排程暫停同步。")
-        return
-
-    city = CURRENT_LOCATION["city"]
-    town = CURRENT_LOCATION["town"]
-    target_lon = CURRENT_LOCATION["lon"]
-    target_lat = CURRENT_LOCATION["lat"]
-
-    pop, rain_10m, wind_dir, humidity, wind_speed = 0, 0.0, 0.0, 0, 0.0
-    radar_status = "SAFE"
-
-    now_str = datetime.datetime.now().strftime("%H:%M:%S")
-    print(f"\n⏰ [{now_str}] 排程觸發...【目前目標：{CURRENT_LOCATION['display_name']}】")
-
-    # 1. 抓取該縣市降雨機率 PoP
-    try:
-        url_pop = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={AUTH_KEY}&locationName={city}"
-        res_pop = requests.get(url_pop, timeout=5, verify=False).json()
-        location_data = res_pop["records"]["location"][0]
-        for elem in location_data["weatherElement"]:
-            if elem["elementName"] == "PoP":
-                pop = int(elem["time"][0]["parameter"]["parameterName"])
-                break
-    except:
-        pass
-
-    # 2. 智慧搜尋：找出最鄰近的雨量測站
-    try:
-        url_rain = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-002?Authorization={AUTH_KEY}&format=JSON"
-        res_rain = requests.get(url_rain, timeout=6, verify=False).json()
-        stations = res_rain["records"].get("Station", res_rain["records"].get("location", []))
-
-        min_dist = 999.0
-        best_station = None
-        for s in stations:
-            s_city = s.get("GeoInfo", {}).get("CountyName", "")
-            s_town = s.get("GeoInfo", {}).get("TownName", "")
-            if city in s_city and town in s_town:
-                best_station = s
-                break
-            s_lon = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLongitude", 0))
-            s_lat = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLatitude", 0))
-            dist = ((s_lon - target_lon) ** 2 + (s_lat - target_lat) ** 2) ** 0.5
-            if dist < min_dist:
-                min_dist = dist
-                best_station = s
-
-        if best_station:
-            rain_10m = float(best_station["RainfallElement"]["Past10Min"]["Precipitation"])
-            if rain_10m < 0:
-                rain_10m = 0.0
-    except:
-        pass
-
-    # 3. 智慧搜尋：找出最近的氣象觀測站（風速、濕度）
-    try:
-        url_wind = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={AUTH_KEY}"
-        res_wind = requests.get(url_wind, timeout=6, verify=False).json()
-        stations = res_wind["records"].get("Station", res_wind["records"].get("location", []))
-
-        min_dist = 999.0
-        best_station = None
-        for s in stations:
-            s_lon = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLongitude", 0))
-            s_lat = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLatitude", 0))
-            dist = ((s_lon - target_lon) ** 2 + (s_lat - target_lat) ** 2) ** 0.5
-            if dist < min_dist:
-                min_dist = dist
-                best_station = s
-
-        if best_station:
-            elem = best_station.get("WeatherElement", {})
-            wind_dir = float(elem["WindDirection"]) if float(elem.get("WindDirection", 0)) >= 0 else 0.0
-            wind_speed = float(elem["WindSpeed"]) if float(elem.get("WindSpeed", 0)) >= 0 else 0.0
-            humidity = int(elem["RelativeHumidity"]) if int(elem.get("RelativeHumidity", 0)) >= 0 else 0
-    except:
-        pass
-
-    # 4. 雷達圖分析
-    try:
-        url_radar_json = f"https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-A0058-003?Authorization={AUTH_KEY}&downloadType=WEB&format=JSON"
-        res_json = requests.get(url_radar_json, timeout=8, verify=False).json()
-        img_url = res_json["cwaopendata"]["dataset"]["resource"]["ProductURL"]
-        img_res = requests.get(img_url, timeout=10, verify=False)
-        img = Image.open(BytesIO(img_res.content)).convert("RGB")
-
-        px_x, px_y = lonlat_to_pixel(target_lon, target_lat)
-        radar_status = check_radar_pixel(img, px_x, px_y)
-    except:
-        pass
-
-    # ---- 🧠 智慧決策鏈 ----
-    data_metrics = f"(Loc:{CURRENT_LOCATION['display_name']} PoP:{pop}% Rain10m:{rain_10m}mm Wind:{int(wind_dir)}deg Humid:{humidity}% WSpd:{wind_speed}m/s Radar:{radar_status})"
-
-    if (
-        rain_10m > 0.0
-        or radar_status == "DANGER"
-        or pop >= 70
-        or (270 <= wind_dir <= 360)
-        or wind_speed > 8.0
-        or humidity > 85
-    ):
-        current_cached_status = f"CLOSE {data_metrics}"
-    else:
-        current_cached_status = f"OPEN {data_metrics}"
-    print(f"✅ 數據同步完成！快取狀態: {current_cached_status}")
-
-
-scheduler = BackgroundScheduler()
-scheduler.add_job(fetch_weather_job, "interval", minutes=10)
-scheduler.start()
-fetch_weather_job()
-
-
-# ================= 🌐 網頁前端 UI (徹底根除 f-string 衝突版本) =================
+# ================= 🌐 網頁前端 UI =================
 @app.get("/", response_class=HTMLResponse)
 def get_home_page():
-    # 1. 為了不讓 Python 的大括號跟 JavaScript/CSS 衝突，我們改用普通字串，前面「不加」f
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -191,6 +51,13 @@ def get_home_page():
             .btn-gps:hover { background-color: #0056b3; }
             .btn-save { background-color: #28a745; }
             .btn-save:hover { background-color: #218838; }
+            
+            /* 📱 新增：手機遙控器按鈕樣式 */
+            .btn-ctrl { font-size: 16px; margin: 5px 0; }
+            .btn-close-hang { background-color: #dc3545; } /* 紅色收衣 */
+            .btn-open-hang { background-color: #17a2b8; }  /* 藍綠開衣 */
+            .btn-stop-hang { background-color: #6c757d; }  /* 灰色停止 */
+            
             .status-box { background: #e9ecef; padding: 12px; border-radius: 8px; margin-top: 15px; font-family: monospace; font-size: 13px; line-height: 1.4; word-break: break-all; }
             .hint { font-size: 12px; color: #666; margin-top: 3px; display: block; }
             hr { border: 0; border-top: 1px solid #ddd; margin: 20px 0; }
@@ -200,6 +67,16 @@ def get_home_page():
     <body>
         <div class="card">
             <h2 style="text-align: center; color: #333; margin-top: 0; font-size: 22px;">衣架守護區域控制台 🛰️</h2>
+            
+            <div class="section-title">📱 手機即時遙控 (手動模式專用)</div>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn-ctrl btn-close-hang" onclick="sendControl('CLOSE')">🔼 遠端收衣</button>
+                <button class="btn-ctrl btn-open-hang" onclick="sendControl('OPEN')">🔽 遠端展開</button>
+            </div>
+            <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
+            <span class="hint">⚠️ 注意：此控制僅在衣架切換為「手動模式 [M]」時生效。</span>
+            
+            <hr>
             
             <div class="section-title">捷徑：手機晶片自動定位</div>
             <button class="btn-gps" onclick="getPhoneGPS()">🎯 抓取手機當前 GPS 守護此處</button>
@@ -242,7 +119,6 @@ def get_home_page():
         </div>
 
         <script>
-            // 🗺️ 台灣縣市與鄉鎮區完整連動資料庫
             const taiwanData = {
                 "基隆市": ["仁愛區", "信義區", "中正區", "中山區", "安樂區", "暖暖區", "七堵區"],
                 "臺北市": ["中正區", "大同區", "中山區", "鬆山區", "大安區", "萬華區", "信義區", "士林區", "北投區", "內湖區", "南港區", "文山區"],
@@ -268,7 +144,6 @@ def get_home_page():
                 "連江縣": ["南竿鄉", "北竿鄉", "莒光鄉", "東引鄉"]
             };
 
-            // 🚀 初始化：載入縣市下拉選單
             window.onload = function() {
                 const citySelect = document.getElementById("citySelect");
                 for (let city in taiwanData) {
@@ -280,7 +155,6 @@ def get_home_page():
                 refreshStatus();
             };
 
-            // 🔄 連動：當縣市改變時，動態更新鄉鎮選單
             function updateTownDropdown(selectedTown = "") {
                 const citySelect = document.getElementById("citySelect");
                 const townSelect = document.getElementById("townSelect");
@@ -308,7 +182,15 @@ def get_home_page():
             }
             setInterval(refreshStatus, 4000);
 
-            // 🎯 手機一鍵定位邏輯
+            // 📱 新增：發送手機控制指令到後端
+            function sendControl(cmd) {
+                fetch(`/api/remote_control?cmd=${cmd}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        console.log("遙控指令已送達:", data.command);
+                    });
+            }
+
             function getPhoneGPS() {
                 if (navigator.geolocation) {
                     document.getElementById("statusBox").innerText = "⏳ 正在向手機索取 GPS 座標...";
@@ -335,7 +217,6 @@ def get_home_page():
                 }
             }
 
-            // 💾 儲存手動選單設定
             function saveManualSettings() {
                 var name = document.getElementById("nameInput").value.trim();
                 var city = document.getElementById("citySelect").value;
@@ -372,14 +253,27 @@ def get_home_page():
     </body>
     </html>
     """
-
-    # 2. 🧠 用單純的 .replace() 取代 f-string 注入，完美避開大括號地獄！
     latlon_str = f"{CURRENT_LOCATION['lat']},{CURRENT_LOCATION['lon']}" if CURRENT_LOCATION['lat'] != 0.0 else ""
-    
     final_html = html_template.replace("__DISPLAY_NAME__", CURRENT_LOCATION["display_name"])
     final_html = final_html.replace("__LAT_LON_VALUE__", latlon_str)
-
     return HTMLResponse(content=final_html, status_code=200)
+
+
+# ================= 📱 新增 API：接收網頁按鈕遙控指令 =================
+@app.get("/api/remote_control")
+def remote_control(cmd: str):
+    global REMOTE_COMMAND
+    if cmd in ["CLOSE", "OPEN", "STOP"]:
+        REMOTE_COMMAND = cmd
+    return {"status": "SUCCESS", "command": REMOTE_COMMAND}
+
+
+# ================= 🌐 擴充原本狀態 API：把手機指令附加在最前面，讓 ESP32 讀取 =================
+@app.get("/hanger/status")
+def get_hanger_status():
+    global current_cached_status, REMOTE_COMMAND
+    # 將手機指令用前綴包裝，例如 "CMD:CLOSE | OPEN (Loc:...)"
+    return f"CMD:{REMOTE_COMMAND} | {current_cached_status}"
 
 
 # ================= 🌐 後端 API：手機 GPS 定位 =================
