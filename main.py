@@ -413,12 +413,18 @@ def get_home_page():
 
             // 新增：切換型邏輯函式
             function toggleControl(targetCmd) {
-                // 先獲取目前的狀態
                 fetch('/hanger/status')
                     .then(res => res.text())
                     .then(text => {
-                        // 如果目前狀態已經包含該動作，則送 STOP，否則送該動作指令
-                        let cmdToSend = text.includes(targetCmd) ? 'STOP' : targetCmd;
+                        // 檢查目前後端紀錄的 CMD 是否已經是 targetCmd
+                        // 我們從 text 裡面解析出 "CMD:XXXX" 來比對
+                        let currentCmd = "";
+                        if (text.includes("CMD:CLOSE")) currentCmd = "CLOSE";
+                        if (text.includes("CMD:OPEN")) currentCmd = "OPEN";
+                        if (text.includes("CMD:STOP")) currentCmd = "STOP";
+
+                        // 只有當目前的指令不是我們要的那個時，才發送指令；否則發送 STOP
+                        let cmdToSend = (currentCmd === targetCmd) ? 'STOP' : targetCmd;
                         sendControl(cmdToSend);
                     });
             }
