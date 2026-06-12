@@ -240,8 +240,13 @@ def get_home_page():
             <div id="manualPanel" style="margin-top: 15px; display: none;">
                 <div class="section-title" style="color: #fd7e14; border-left-color: #fd7e14;">🕹️ 手動即時遙控面板</div>
                 <div style="display: flex; gap: 10px;">
-                    <button class="btn-ctrl btn-close-hang" onclick="sendControl('CLOSE')">🔼 遠端收衣</button>
-                    <button class="btn-ctrl btn-open-hang" onclick="sendControl('OPEN')">🔽 遠端展開</button>
+                    <button class="btn-ctrl btn-close-hang" 
+                            onmousedown="startHold('CLOSE')" onmouseup="stopHold()" onmouseleave="stopHold()"
+                            ontouchstart="startHold('CLOSE')" ontouchend="stopHold()">🔼 遠端收衣</button>
+                    <button class="btn-ctrl btn-open-hang" 
+                            onmousedown="startHold('OPEN')" onmouseup="stopHold()" onmouseleave="stopHold()"
+                            ontouchstart="startHold('OPEN')" ontouchend="stopHold()">🔽 遠端展開</button>
+                    <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
                 </div>
                 <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
             </div>
