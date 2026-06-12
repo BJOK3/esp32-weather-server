@@ -247,16 +247,11 @@ def get_home_page():
             <div id="manualPanel" style="margin-top: 15px; display: none;">
                 <div class="section-title" style="color: #fd7e14; border-left-color: #fd7e14;">🕹️ 手動即時遙控面板</div>
                 <div style="display: flex; gap: 10px;">
-                    <button class="btn-ctrl btn-close-hang" 
-                            onmousedown="startHold('CLOSE')" onmouseup="stopHold()" onmouseleave="stopHold()"
-                            ontouchstart="startHold('CLOSE')" ontouchend="stopHold()">
-                        🔼 遠端收衣
+                    <button class="btn-ctrl btn-close-hang" onclick="toggleControl('CLOSE')">
+                        🔼 切換：收衣
                     </button>
-
-                    <button class="btn-ctrl btn-open-hang" 
-                            onmousedown="startHold('OPEN')" onmouseup="stopHold()" onmouseleave="stopHold()"
-                            ontouchstart="startHold('OPEN')" ontouchend="stopHold()">
-                        🔽 遠端展開
+                    <button class="btn-ctrl btn-open-hang" onclick="toggleControl('OPEN')">
+                        🔽 切換：展開
                     </button>
                 </div>
                 <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
@@ -413,27 +408,31 @@ def get_home_page():
                     });
                 }
             }
-            // 新增這兩個變數來控制發送邏輯
-            let holdTimer = null;
+            
+            // ... (原本的 taiwanData 與其他設定保持不變)
 
-            function startHold(cmd) {
-                // 當按住時，立即發送指令
-                sendControl(cmd);
+            // 新增：切換型邏輯函式
+            function toggleControl(targetCmd) {
+                // 先獲取目前的狀態
+                fetch('/hanger/status')
+                    .then(res => res.text())
+                    .then(text => {
+                        // 如果目前狀態已經包含該動作，則送 STOP，否則送該動作指令
+                        let cmdToSend = text.includes(targetCmd) ? 'STOP' : targetCmd;
+                        sendControl(cmdToSend);
+                    });
             }
 
-            function stopHold() {
-                // 當放開時，發送 STOP 指令
-                sendControl('STOP');
-            }
-
-            // 這是你原本就有的，用來發送 API 指令
+            // 更新：單純發送指令的函式
             function sendControl(cmd) {
                 fetch(`/api/remote_control?cmd=${cmd}`)
                     .then(res => res.json())
                     .then(data => { 
-                        console.log("指令發送成功:", cmd);
-                        refreshStatus(); 
+                        console.log("指令已發送:", cmd);
+                        refreshStatus(); // 發送後立即更新介面狀態
                     });
+            }
+
             }
 
             function saveManualSettings() {
