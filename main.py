@@ -41,13 +41,11 @@ def fetch_weather_job():
         current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
         return
 
-    try:
-        # 這裡放你原本的氣象局 API 抓取與雷達圖判斷邏輯...
-# ================= 🌤️ 氣象偵測核心函式 (完整 CWA API + 雷達切片辨識) =================
+# ================= 🌤️ 氣象偵測核心函式 (修復縮排錯誤) =================
 def fetch_weather_job():
     """ 
     定時或手動觸發的天氣檢查大腦。
-    自動串接氣象署 API 與雷達圖分析，並將結果封裝，供 ESP32 每 1.5 秒或 10 分鐘下載。
+    自動串接氣象署 API 與雷達圖分析，並將結果封裝，供 ESP32 下載。
     """
     global current_cached_status, CURRENT_LOCATION
     
@@ -69,8 +67,11 @@ def fetch_weather_job():
     display_name = CURRENT_LOCATION["display_name"]
 
     try:
+        # 🟢 這裡開始的所有程式碼，前面都必須有 8 個空格（相對於最左邊）
+        # 也就是相對於 try: 必須往右縮排 4 個空格！
+        
         # -----------------------------------------------------------------
-        # 🟢 第一部分：抓取中央氣象署 (CWA) 鄉鎮天氣觀測資料
+        # 1. 抓取中央氣象署 (CWA) 鄉鎮天氣觀測資料
         # -----------------------------------------------------------------
         cwa_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={AUTH_KEY}&format=JSON"
         res = requests.get(cwa_url, timeout=8, verify=False)
@@ -80,43 +81,30 @@ def fetch_weather_job():
             stations = data.get("records", {}).get("Station", [])
             target_station = None
 
-            # 優先權 1：尋找同縣市且同鄉鎮的測站
             for s in stations:
                 geo = s.get("GeoInfo", {})
                 if geo.get("CountyName") == city_name and geo.get("TownName") == town_name:
                     target_station = s
                     break
             
-            # 優先權 2：退而求其次，尋找同縣市的任意測站
             if not target_station:
                 for s in stations:
                     if s.get("GeoInfo", {}).get("CountyName") == city_name:
                         target_station = s
                         break
 
-            # 解析氣象站觀測數據
             if target_station:
                 obs = target_station.get("WeatherElement", {})
-                
-                # 1. 相對濕度
                 humidity = int(obs.get("RelativeHumidity", 50))
-                
-                # 2. 10分鐘累積降雨量
                 rain_10m = float(obs.get("Now", {}).get("Precipitation10Min", 0.0))
-                if rain_10m < 0: rain_10m = 0.0 # 排除代碼故障負數
-                
-                # 3. 風速與風向
+                if rain_10m < 0: rain_10m = 0.0
                 wind_speed = float(obs.get("WindSpeed", 0.0))
                 wind_dir = float(obs.get("WindDirection", 0.0))
-                
                 print(f"[CWA 測站成功] 鎖定觀測站: {target_station.get('StationName')}")
-        else:
-            print(f"[CWA 警告] 鄉鎮觀測 API 回傳狀態碼: {res.status_code}")
 
         # -----------------------------------------------------------------
-        # 🔵 第二部分：抓取預報資料庫 (取得未來幾小時內的降雨機率 PoP)
+        # 2. 抓取預報資料庫 (取得未來幾小時內的降雨機率 PoP)
         # -----------------------------------------------------------------
-        # 根據縣市別對應到氣象署不同的預報代碼
         forecast_mapping = {
             "宜蘭縣": "F-D0047-001", "桃園市": "F-D0047-005", "新竹縣": "F-D0047-009",
             "苗栗縣": "F-D0047-013", "彰化縣": "F-D0047-017", "南投縣": "F-D0047-021",
@@ -128,7 +116,7 @@ def fetch_weather_job():
             "連江縣": "F-D0047-085"
         }
         
-        fid = forecast_mapping.get(city_name, "F-D0047-089") # 找不到就使用全台總表
+        fid = forecast_mapping.get(city_name, "F-D0047-089")
         pop_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/{fid}?Authorization={AUTH_KEY}&elementName=PoP6h&format=JSON"
         pop_res = requests.get(pop_url, timeout=8, verify=False)
         
@@ -139,13 +127,12 @@ def fetch_weather_job():
                 if loc.get("locationName") == town_name:
                     elems = loc.get("weatherElement", [])
                     if elems:
-                        # 抓取最近一期的 6小時降雨機率
                         val = elems[0].get("time", [{}])[0].get("elementValue", [{}])[0].get("value", "0")
                         pop = int(val) if val and val != " " else 0
                     break
 
         # -----------------------------------------------------------------
-        # 🔴 第三部分：即時降雨雷達圖切片 (雷達回波像素級掃描技術)
+        # 3. 即時降雨雷達圖切片 (雷達回波像素級掃描技術)
         # -----------------------------------------------------------------
         radar_api_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0058-001?Authorization={AUTH_KEY}&format=JSON"
         radar_res = requests.get(radar_api_url, timeout=8, verify=False)
@@ -153,12 +140,9 @@ def fetch_weather_job():
         if radar_res.status_code == 200:
             radar_img_url = radar_res.json().get("records", {}).get("RadarImage", [{}])[0].get("ImageUrl", "")
             if radar_img_url:
-                # 下載氣象局最新的無地形黑底雷達圖
                 img_data = requests.get(radar_img_url, timeout=8, verify=False).content
                 img = Image.open(BytesIO(img_data)).convert("RGB")
                 
-                # 🎯 經緯度座標變換公式 (將台灣 GPS 轉換為氣象局雷達圖 1024x1024 的 XY 像素點)
-                # 雷達圖邊界座標：左上 (20N, 117.5E) 到 右下 (26.5N, 123.5E)
                 lat_val = CURRENT_LOCATION["lat"]
                 lon_val = CURRENT_LOCATION["lon"]
                 
@@ -166,7 +150,6 @@ def fetch_weather_job():
                     pixel_x = int((lon_val - 117.5) / (123.5 - 117.5) * 1024)
                     pixel_y = int((26.5 - lat_val) / (26.5 - 20.0) * 1024)
                     
-                    # 🔍 建立 11x11 像素的守護切片區（周圍約方圓 5 ~ 10 公里的雷達訊號掃描）
                     danger_pixels = 0
                     for dx in range(-5, 6):
                         for dy in range(-5, 6):
@@ -174,22 +157,17 @@ def fetch_weather_job():
                             ty = pixel_y + dy
                             if 0 <= tx < 1024 and 0 <= ty < 1024:
                                 r, g, b = img.getpixel((tx, ty))
-                                # 氣象局雷達圖：純黑背景是 (0,0,0) 或極暗。如果帶有藍綠黃紅(回波)，則代表有雨雲
-                                # 只要 RGB 任一數值高於 35，視為該像素遭雨雲覆蓋
                                 if r > 35 or g > 35 or b > 35:
                                     danger_pixels += 1
                     
-                    # 判定：如果守護切片內有超過 8 個像素出現雨雲，立刻下達雷達警戒
                     if danger_pixels >= 8:
                         radar_verdict = "DANGER"
-                        print(f"⚠️ [雷達警告] 偵測到周圍有強烈雨雲進逼！(危險像素點數: {danger_pixels})")
+                        print(f"⚠️ [雷達警告] 偵測到周圍有強烈雨雲進逼！(危險點數: {danger_pixels})")
 
         # -----------------------------------------------------------------
-        # 🏁 第四部分：打包所有數據，更新快取字串 (給 ESP32 下載)
+        # 4. 打包數據更新快取
         # -----------------------------------------------------------------
         now_str = datetime.datetime.now().strftime("%H:%M:%S")
-        
-        # 判斷物理衣架是否該收起 (做為網頁文字顯示依據)
         action_advice = "OPEN"
         if pop >= 70 or rain_10m > 0.0 or radar_verdict == "DANGER" or humidity > 85 or wind_speed > 8.0:
             action_advice = "CLOSE"
@@ -203,7 +181,7 @@ def fetch_weather_job():
         print(f"📡 [排程大腦成功] 目前最新狀態：{current_cached_status}")
 
     except Exception as e:
-        # 萬一遇到斷網或 API 調整，進入安全防護字串
+        # except 必須跟 try 站在同一個縮排水平線上
         current_cached_status = f"CLOSE (Error:氣象站聯動異常 {str(e)})"
         print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
 
