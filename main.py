@@ -1,7 +1,7 @@
 import datetime
 import os
 from io import BytesIO
-import urllib.parse  # 🆕 處理地址中文字元編碼
+import urllib.parse
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
@@ -15,13 +15,13 @@ app = FastAPI()
 
 AUTH_KEY = "CWA-02744568-A84E-49F7-8496-8E9D0834D8C2"
 
-# ================= 🆕 全域變數設定 (預設埔里鎮) =================
+# ================= 🗺️ 全域變數設定 =================
 CURRENT_LOCATION = {
-    "address": "南投縣埔里鎮",  # 🆕 記住你輸入的地址
+    "address": "542南投縣草屯鎮富寮里中正路568號",  # 支援超精準門牌
     "city": "南投縣",
-    "town": "埔里鎮",
-    "lon": 121.00,
-    "lat": 24.00,
+    "town": "草屯鎮",
+    "lon": 120.686,  # 草屯富寮里中心點經緯度預設值
+    "lat": 23.978,
 }
 
 current_cached_status = "OPEN (PoP:0% Rain10m:0.0mm Wind:0deg Humid:0% WSpd:0.0m/s Radar:SAFE) [Initializing]"
@@ -76,8 +76,8 @@ def fetch_weather_job():
             if elem["elementName"] == "PoP":
                 pop = int(elem["time"][0]["parameter"]["parameterName"])
                 break
-    except:
-        pass
+    except Exception as e:
+        print(f"抓取 PoP 失敗: {e}")
 
     # 2. 智慧搜尋：找出最鄰近的雨量測站
     try:
@@ -92,9 +92,11 @@ def fetch_weather_job():
         for s in stations:
             s_city = s.get("GeoInfo", {}).get("CountyName", "")
             s_town = s.get("GeoInfo", {}).get("TownName", "")
+            # 精準匹配
             if city in s_city and town in s_town:
                 best_station = s
                 break
+            # 距離匹配
             s_lon = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLongitude", 0))
             s_lat = float(s.get("GeoInfo", {}).get("Coordinates", [{}])[0].get("StationLatitude", 0))
             dist = ((s_lon - target_lon) ** 2 + (s_lat - target_lat) ** 2) ** 0.5
@@ -108,8 +110,9 @@ def fetch_weather_job():
             )
             if rain_10m < 0:
                 rain_10m = 0.0
-    except:
-        pass
+            print(f"📡 已綁定最近雨量站: {best_station.get('StationName')}")
+    except Exception as e:
+        print(f"抓取雨量站失敗: {e}")
 
     # 3. 智慧搜尋：找出最近的氣象觀測站（風速、濕度）
     try:
@@ -146,8 +149,9 @@ def fetch_weather_job():
                 if int(elem.get("RelativeHumidity", 0)) >= 0
                 else 0
             )
-    except:
-        pass
+            print(f"📡 已綁定最近氣象站: {best_station.get('StationName')}")
+    except Exception as e:
+        print(f"抓取氣象站失敗: {e}")
 
     # 4. 雷達圖分析
     try:
@@ -159,11 +163,10 @@ def fetch_weather_job():
 
         px_x, px_y = lonlat_to_pixel(target_lon, target_lat)
         radar_status = check_radar_pixel(img, px_x, px_y)
-    except:
-        pass
+    except Exception as e:
+        print(f"雷達視覺辨識失敗: {e}")
 
     # ---- 🧠 智慧決策鏈 ----
-    # 在 Loc 後方直接秀出人類看得到的地址，方便除錯
     data_metrics = f"(Loc:{city}{town} PoP:{pop}% Rain10m:{rain_10m}mm Wind:{int(wind_dir)}deg Humid:{humidity}% WSpd:{wind_speed}m/s Radar:{radar_status})"
 
     if (
@@ -193,7 +196,7 @@ def get_home_page():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>智慧衣架地址設定控制台</title>
+        <title>智慧衣架門牌定位控制台</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body {{ font-family: Arial, sans-serif; text-align: center; background-color: #f0f4f8; padding: 20px; }}
@@ -208,15 +211,15 @@ def get_home_page():
     </head>
     <body>
         <div class="card">
-            <h2 style="text-align: center; color: #007bff; margin-top: 0;">衣架守護區域 🌍</h2>
-            <p style="font-size: 14px; color: #666; text-align: center;">請輸入您智慧衣架安裝的地址，系統會自動在幕後轉換 GPS 座標並鎖定雷達回波。</p>
+            <h2 style="text-align: center; color: #007bff; margin-top: 0;">衣架精準守護區域 🌍</h2>
+            <p style="font-size: 14px; color: #666; text-align: center;">輸入完整精準門牌地址，系統會利用地理編碼自動鎖定該棟建築的雷達圖像素座標與最鄰近測站。</p>
             
             <div class="form-group">
-                <label>📍 請輸入安裝地址</label>
-                <input type="text" id="addressInput" value="{CURRENT_LOCATION['address']}" placeholder="例如：南投縣埔里鎮中山路一段">
+                <label>📍 請輸入完整安裝地址</label>
+                <input type="text" id="addressInput" value="{CURRENT_LOCATION['address']}" placeholder="例如：542南投縣草屯鎮富寮里中正路568號">
             </div>
 
-            <button onclick="updateAddress()">💾 儲存地址並立即同步</button>
+            <button onclick="updateAddress()">💾 儲存門牌並立即同步</button>
             
             <h3 style="margin-top: 20px; margin-bottom: 5px; font-size: 15px;">📡 目前衣架同步狀態：</h3>
             <div class="status-box" id="statusBox">載入中...</div>
@@ -239,16 +242,16 @@ def get_home_page():
                     alert("地址不能為空！");
                     return;
                 }}
-                document.getElementById("statusBox").innerText = "⏳ 正在將地址轉譯為 GPS 座標，並同步向氣象署拉取最新測站與雷達圖...";
+                document.getElementById("statusBox").innerText = "⏳ 正在分析精準門牌之 GPS 座標...";
 
                 fetch(`/api/set_address?address=${{encodeURIComponent(addr)}}`)
                     .then(res => res.json())
                     .then(data => {{
                         if(data.status === "SUCCESS") {{
-                            alert(`🎉 地址設定成功！\\n系統已在背景自動分析並鎖定雷達區域。`);
+                            alert(`🎉 門牌解碼成功！\\n鎖定區域：${{data.city}}${{data.town}}\\n座標：(${{data.lon}}, ${{data.lat}})`);
                             refreshStatus();
                         }} else {{
-                            alert("❌ 無法解析該地址，請輸入更明確的完整地址或縣市名稱。");
+                            alert("❌ 無法辨識此地址，請確認縣市與道路名稱是否正確。");
                             refreshStatus();
                         }}
                     }})
@@ -263,47 +266,60 @@ def get_home_page():
     return HTMLResponse(content=html_content, status_code=200)
 
 
-# ================= 🌐 🆕 新增：把地址轉成經緯度的 API =================
+# ================= 🌐 🆕 升級：結構化地理編碼 API =================
 @app.get("/api/set_address")
 def set_address(address: str):
     global CURRENT_LOCATION
     try:
-        # 使用 OpenStreetMap 免費的 Geocoding API（加上 User-Agent 是基本禮貌防擋規則）
-        headers = {"User-Agent": "SmartHangerApp/1.0 (contact: test@example.com)"}
-        geocode_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(address)}&format=json&limit=1"
+        headers = {"User-Agent": "SmartHangerApp/2.0 (contact: test@example.com)"}
+        # 增加 addressdetails=1，強迫 OpenStreetMap 把縣市、鄉鎮分欄位回傳
+        geocode_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(address)}&format=json&addressdetails=1&limit=1"
 
         res = requests.get(geocode_url, headers=headers, timeout=5).json()
 
         if res and len(res) > 0:
             lon = float(res[0]["lon"])
             lat = float(res[0]["lat"])
-            display_name = res[0]["display_name"]
 
-            # 從回傳的名稱或原本地址中，粗略分出「縣市」與「鄉鎮」提供給氣象署 API
-            # 台灣地址通常前三個字是縣市（如：南投縣、臺中市），後三個字是鄉鎮區
-            city = address[:3]
-            # 相容台/臺大小寫
+            # 🧠 從回傳的結構化 address 字典裡精準提取縣市與鄉鎮
+            addr_details = res[0].get("address", {})
+
+            # 提取縣市 (優先拿 county 或 city，再拿 state)
+            city = (
+                addr_details.get("county", "")
+                or addr_details.get("city", "")
+                or addr_details.get("state", "")
+            )
+            # 提取鄉鎮區 (優先拿 town 或 suburb，再拿 city_district)
+            town = (
+                addr_details.get("town", "")
+                or addr_details.get("suburb", "")
+                or addr_details.get("city_district", "")
+            )
+
+            # 🛠️ 防禦校正：若對方的中文門牌解析導致 Nominatim 欄位錯位，使用保底字串搜查
+            if not city or "縣" not in city and "市" not in city:
+                city = "南投縣" if "南投" in address else address[:3]
+            if not town:
+                for kw in ["鎮", "鄉", "區", "市"]:
+                    if kw in address:
+                        start = address.find(city) + len(city) if city in address else 0
+                        idx = address.find(kw, start)
+                        town = address[max(0, idx - 2) : idx + 1]
+                        break
+
+            # 確保台灣常見的「台」轉成氣象署官方認定的「臺」
             if city.startswith("台"):
                 city = "臺" + city[1:]
 
-            # 尋找鄉鎮區（簡單從第4個字抓到有 鎮/鄉/區/市 的地方）
-            town = ""
-            for keyword in ["區", "鎮", "鄉", "市"]:
-                if keyword in address[3:]:
-                    end_idx = address[3:].find(keyword) + 4
-                    town = address[3:end_idx]
-                    break
-            if not town:
-                town = address[3:6]  # 沒撈到就預設抓三個字
-
-            # 寫入系統記憶體
+            # 寫入系統全域變數
             CURRENT_LOCATION["address"] = address
             CURRENT_LOCATION["city"] = city
             CURRENT_LOCATION["town"] = town
             CURRENT_LOCATION["lon"] = lon
             CURRENT_LOCATION["lat"] = lat
 
-            # 立刻強制執行排程，更新全台測站綁定
+            # 立刻重新執行一次抓取，讓家裡衣架瞬間同步
             fetch_weather_job()
 
             return {
