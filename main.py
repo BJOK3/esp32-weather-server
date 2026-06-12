@@ -433,7 +433,7 @@ def get_home_page():
                     });
             }
 
-            }
+            
 
             function saveManualSettings() {
                 var name = document.getElementById("nameInput").value.trim();
