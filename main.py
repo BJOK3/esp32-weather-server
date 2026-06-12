@@ -26,19 +26,20 @@ CURRENT_LOCATION = {
 
 current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
 
-# 📱 新增：手機遠端控制指令快取 ("STOP", "CLOSE", "OPEN")
-REMOTE_COMMAND = "STOP" 
+# 📱 全新修改：移除了實體按鈕，改由雲端全權紀錄狀態
+SYSTEM_MODE = "AUTO"      # 系統模式："AUTO" (自動) 或 "MANUAL" (手動)
+REMOTE_COMMAND = "STOP"   # 手動模式指令："STOP", "CLOSE", "OPEN"
 
 # ... (中間的 fetch_weather_job 等函式保持不變) ...
 
-# ================= 🌐 網頁前端 UI =================
+# ================= 🌐 網頁前端 UI (純虛擬遙控器版本) =================
 @app.get("/", response_class=HTMLResponse)
 def get_home_page():
     html_template = """
     <!DOCTYPE html>
     <html>
     <head>
-        <title>智慧衣架多功能控制台</title>
+        <title>智慧衣架無線控制台</title>
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <style>
             body { font-family: Arial, sans-serif; text-align: center; background-color: #f0f4f8; padding: 20px; }
@@ -52,8 +53,10 @@ def get_home_page():
             .btn-save { background-color: #28a745; }
             .btn-save:hover { background-color: #218838; }
             
-            /* 📱 新增：手機遙控器按鈕樣式 */
+            /* 📱 手機遙控面板樣式 */
             .btn-ctrl { font-size: 16px; margin: 5px 0; }
+            .btn-mode-auto { background-color: #6f42c1; } /* 紫色自動 */
+            .btn-mode-manual { background-color: #fd7e14; } /* 橘色手動 */
             .btn-close-hang { background-color: #dc3545; } /* 紅色收衣 */
             .btn-open-hang { background-color: #17a2b8; }  /* 藍綠開衣 */
             .btn-stop-hang { background-color: #6c757d; }  /* 灰色停止 */
@@ -62,19 +65,27 @@ def get_home_page():
             .hint { font-size: 12px; color: #666; margin-top: 3px; display: block; }
             hr { border: 0; border-top: 1px solid #ddd; margin: 20px 0; }
             .section-title { font-size: 14px; color: #007bff; font-weight: bold; margin-bottom: 10px; border-left: 4px solid #007bff; padding-left: 8px; }
+            .mode-badge { float: right; padding: 2px 8px; border-radius: 4px; color: white; font-size: 12px; font-weight: bold; }
         </style>
     </head>
     <body>
         <div class="card">
             <h2 style="text-align: center; color: #333; margin-top: 0; font-size: 22px;">衣架守護區域控制台 🛰️</h2>
             
-            <div class="section-title">📱 手機即時遙控 (手動模式專用)</div>
+            <div class="section-title">⚙️ 核心運作模式設定</div>
             <div style="display: flex; gap: 10px;">
-                <button class="btn-ctrl btn-close-hang" onclick="sendControl('CLOSE')">🔼 遠端收衣</button>
-                <button class="btn-ctrl btn-open-hang" onclick="sendControl('OPEN')">🔽 遠端展開</button>
+                <button class="btn-ctrl btn-mode-auto" onclick="setSystemMode('AUTO')">🤖 切換：自動AI守護</button>
+                <button class="btn-ctrl btn-mode-manual" onclick="setSystemMode('MANUAL')">📱 切換：純手動遙控</button>
             </div>
-            <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
-            <span class="hint">⚠️ 注意：此控制僅在衣架切換為「手動模式 [M]」時生效。</span>
+            
+            <div id="manualPanel" style="margin-top: 15px; display: none;">
+                <div class="section-title" style="color: #fd7e14; border-left-color: #fd7e14;">🕹️ 手動即時遙控面板</div>
+                <div style="display: flex; gap: 10px;">
+                    <button class="btn-ctrl btn-close-hang" onclick="sendControl('CLOSE')">🔼 遠端收衣</button>
+                    <button class="btn-ctrl btn-open-hang" onclick="sendControl('OPEN')">🔽 遠端展開</button>
+                </div>
+                <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
+            </div>
             
             <hr>
             
@@ -107,9 +118,8 @@ def get_home_page():
             </div>
 
             <div class="form-group">
-                <label>4. 精準經緯度座標 (選填：想更精準在打)</label>
+                <label>4. 精準經緯度座標 (選填)</label>
                 <input type="text" id="latlonInput" value="__LAT_LON_VALUE__" placeholder="例如：23.978,120.686">
-                <span class="hint">💡 提示：留空的話，系統會自動使用上方選單的鄉鎮中心點；想精準到特定門牌，再貼上 Google 地圖複製的「緯度,經度」。</span>
             </div>
 
             <button class="btn-save" onclick="saveManualSettings()">💾 儲存手動設定並立即同步</button>
@@ -152,6 +162,8 @@ def get_home_page():
                     opt.innerHTML = city;
                     citySelect.appendChild(opt);
                 }
+                // 初始化檢查當前模式
+                checkModeOnLoad();
                 refreshStatus();
             };
 
@@ -159,14 +171,11 @@ def get_home_page():
                 const citySelect = document.getElementById("citySelect");
                 const townSelect = document.getElementById("townSelect");
                 const selectedCity = citySelect.value;
-
                 townSelect.innerHTML = '<option value="">--請選擇--</option>';
-
                 if (selectedCity && taiwanData[selectedCity]) {
                     taiwanData[selectedCity].forEach(function(town) {
                         let opt = document.createElement("option");
-                        opt.value = town;
-                        opt.innerHTML = town;
+                        opt.value = town; opt.innerHTML = town;
                         if (town === selectedTown) opt.selected = true;
                         townSelect.appendChild(opt);
                     });
@@ -182,37 +191,52 @@ def get_home_page():
             }
             setInterval(refreshStatus, 4000);
 
-            // 📱 新增：發送手機控制指令到後端
+            // 📱 模式切換邏輯
+            function setSystemMode(mode) {
+                fetch(`/api/set_mode?mode=${mode}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        var panel = document.getElementById("manualPanel");
+                        if (data.mode === "MANUAL") {
+                            panel.style.display = "block";
+                            alert("已切換為【純手動遙控模式】，此時 AI 守護暫停。");
+                        } else {
+                            panel.style.display = "none";
+                            alert("已開啟【🤖 自動 AI 守護模式】，系統將自動根據天氣偵測開關衣架。");
+                        }
+                        refreshStatus();
+                    });
+            }
+
+            function checkModeOnLoad() {
+                fetch('/api/get_current_mode')
+                    .then(res => res.json())
+                    .then(data => {
+                        if(data.mode === "MANUAL") {
+                            document.getElementById("manualPanel").style.display = "block";
+                        }
+                    });
+            }
+
             function sendControl(cmd) {
                 fetch(`/api/remote_control?cmd=${cmd}`)
                     .then(res => res.json())
-                    .then(data => {
-                        console.log("遙控指令已送達:", data.command);
-                    });
+                    .then(data => { console.log("遙控指令:", data.command); refreshStatus(); });
             }
 
             function getPhoneGPS() {
                 if (navigator.geolocation) {
                     document.getElementById("statusBox").innerText = "⏳ 正在向手機索取 GPS 座標...";
                     navigator.geolocation.getCurrentPosition(function(position) {
-                        var lat = position.coords.latitude;
-                        var lon = position.coords.longitude;
-                        document.getElementById("statusBox").innerText = `🛰️ 取得 GPS (${lat.toFixed(4)}, ${lon.toFixed(4)})...`;
-                        
+                        var lat = position.coords.latitude; var lon = position.coords.longitude;
                         fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
-                            .then(res => res.json())
-                            .then(data => {
+                            .then(res => res.json()).then(data => {
                                 alert(`🎉 手機定位同步成功！\\n鎖定區域：${data.city}${data.town}`);
                                 refreshStatus();
-                                
                                 document.getElementById("nameInput").value = data.name;
                                 document.getElementById("citySelect").value = data.city;
                                 updateTownDropdown(data.town);
-                                document.getElementById("latlonInput").value = `${lat.toFixed(4)},${lon.toFixed(4)}`;
                             });
-                    }, function(error) {
-                        alert("❌ 定位失敗: " + error.message);
-                        refreshStatus();
                     });
                 }
             }
@@ -221,33 +245,9 @@ def get_home_page():
                 var name = document.getElementById("nameInput").value.trim();
                 var city = document.getElementById("citySelect").value;
                 var town = document.getElementById("townSelect").value;
-                var latlon = document.getElementById("latlonInput").value.trim();
-                
-                if(!name || !city || !town) {
-                    alert("『地名』、『縣市選單』、『鄉鎮選單』均為必填！");
-                    return;
-                }
-
-                var lat = "0";
-                var lon = "0";
-                if(latlon) {
-                    var parts = latlon.split(",");
-                    if(parts.length !== 2) {
-                        alert("經緯度格式錯誤！");
-                        return;
-                    }
-                    lat = parts[0].trim();
-                    lon = parts[1].trim();
-                }
-
-                document.getElementById("statusBox").innerText = "⏳ 正在儲存設定並同步刷新氣象大數據...";
-
-                fetch(`/api/set_manual?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
-                    .then(res => res.json())
-                    .then(data => {
-                        alert(`🎉 設定儲存成功！\\n守護目標：${data.name}\\n定位方式：${data.mode}`);
-                        refreshStatus();
-                    });
+                if(!name || !city || !town) { alert("請填寫地名與選擇縣市鄉鎮！"); return; }
+                fetch(`/api/set_manual?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=0&lon=0`)
+                    .then(res => res.json()).then(data => { alert("設定儲存成功！"); refreshStatus(); });
             }
         </script>
     </body>
@@ -259,7 +259,20 @@ def get_home_page():
     return HTMLResponse(content=final_html, status_code=200)
 
 
-# ================= 📱 新增 API：接收網頁按鈕遙控指令 =================
+# ================= 📱 新增 API：模式切換 =================
+@app.get("/api/set_mode")
+def set_mode(mode: str):
+    global SYSTEM_MODE, REMOTE_COMMAND
+    if mode in ["AUTO", "MANUAL"]:
+        SYSTEM_MODE = mode
+        if mode == "AUTO":
+            REMOTE_COMMAND = "STOP" # 返回自動模式時，手動指令歸零
+    return {"status": "SUCCESS", "mode": SYSTEM_MODE}
+
+@app.get("/api/get_current_mode")
+def get_current_mode():
+    return {"mode": SYSTEM_MODE}
+
 @app.get("/api/remote_control")
 def remote_control(cmd: str):
     global REMOTE_COMMAND
@@ -268,12 +281,12 @@ def remote_control(cmd: str):
     return {"status": "SUCCESS", "command": REMOTE_COMMAND}
 
 
-# ================= 🌐 擴充原本狀態 API：把手機指令附加在最前面，讓 ESP32 讀取 =================
+# ================= 🌐 擴充狀態 API：對齊新包裝格式給 ESP32 =================
 @app.get("/hanger/status")
 def get_hanger_status():
-    global current_cached_status, REMOTE_COMMAND
-    # 將手機指令用前綴包裝，例如 "CMD:CLOSE | OPEN (Loc:...)"
-    return f"CMD:{REMOTE_COMMAND} | {current_cached_status}"
+    global current_cached_status, REMOTE_COMMAND, SYSTEM_MODE
+    # 封裝格式： "MODE:MANUAL | CMD:STOP | CLOSE (Loc:...)"
+    return f"MODE:{SYSTEM_MODE} | CMD:{REMOTE_COMMAND} | {current_cached_status}"
 
 
 # ================= 🌐 後端 API：手機 GPS 定位 =================
