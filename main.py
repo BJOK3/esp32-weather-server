@@ -266,40 +266,59 @@ def get_home_page():
     return HTMLResponse(content=html_content, status_code=200)
 
 
-# ================= 🌐 🆕 升級：結構化地理編碼 API =================
+# ================= 🌐 🆕 智能防錯升級：結構化地理編碼 API =================
 @app.get("/api/set_address")
 def set_address(address: str):
     global CURRENT_LOCATION
     try:
-        headers = {"User-Agent": "SmartHangerApp/2.0 (contact: test@example.com)"}
-        # 增加 addressdetails=1，強迫 OpenStreetMap 把縣市、鄉鎮分欄位回傳
+        headers = {"User-Agent": "SmartHangerApp/2.5 (contact: test@example.com)"}
+        
+        # 1. 先用原本使用者輸入的精準地址去搜尋
         geocode_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(address)}&format=json&addressdetails=1&limit=1"
-
         res = requests.get(geocode_url, headers=headers, timeout=5).json()
 
+        # 🧠 2. 智能防錯機制：如果因為「號碼太精準」導致 OpenStreetMap 找不到...
+        if not res or len(res) == 0:
+            print(f"🔍 精準門牌找不到，啟動自動降級模糊搜尋...")
+            
+            # 削掉「XX號」或「XX號XX樓」再搜一次
+            fallback_address = address
+            for keyword in ["號", "樓"]:
+                if keyword in fallback_address:
+                    # 找到最後一個數字開頭到號結尾的位置切掉
+                    idx = fallback_address.find(keyword)
+                    while idx > 0 and fallback_address[idx-1].isdigit():
+                        idx -= 1
+                    fallback_address = fallback_address[:idx]
+                    break
+            
+            # 如果連郵遞區號（3或5碼數字）也造成干擾，把最前面的數字拔掉
+            if fallback_address and fallback_address[0].isdigit():
+                fallback_address = "".join([c for c in fallback_address if not c.isdigit()])
+
+            print(f"👉 嘗試使用模糊地址搜尋: {fallback_address}")
+            geocode_url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(fallback_address)}&format=json&addressdetails=1&limit=1"
+            res = requests.get(geocode_url, headers=headers, timeout=5).json()
+
+        # 3. 解析最終找到的結果
         if res and len(res) > 0:
             lon = float(res[0]["lon"])
             lat = float(res[0]["lat"])
-
-            # 🧠 從回傳的結構化 address 字典裡精準提取縣市與鄉鎮
             addr_details = res[0].get("address", {})
 
-            # 提取縣市 (優先拿 county 或 city，再拿 state)
-            city = (
-                addr_details.get("county", "")
-                or addr_details.get("city", "")
-                or addr_details.get("state", "")
-            )
-            # 提取鄉鎮區 (優先拿 town 或 suburb，再拿 city_district)
-            town = (
-                addr_details.get("town", "")
-                or addr_details.get("suburb", "")
-                or addr_details.get("city_district", "")
-            )
+            # 提取縣市
+            city = addr_details.get("county", "") or addr_details.get("city", "") or addr_details.get("state", "")
+            # 提取鄉鎮區
+            town = addr_details.get("town", "") or addr_details.get("suburb", "") or addr_details.get("city_district", "")
 
-            # 🛠️ 防禦校正：若對方的中文門牌解析導致 Nominatim 欄位錯位，使用保底字串搜查
-            if not city or "縣" not in city and "市" not in city:
-                city = "南投縣" if "南投" in address else address[:3]
+            # 🛠️ 萬一地圖回傳非結構化資料，使用中文保底機制
+            if not city or ("縣" not in city and "市" not in city):
+                for k in ["南投縣", "臺中市", "彰化縣", "臺北市", "新北市", "高雄市"]:
+                    if k[:2] in address:
+                        city = k
+                        break
+                if not city: city = address[:3]
+                
             if not town:
                 for kw in ["鎮", "鄉", "區", "市"]:
                     if kw in address:
@@ -308,18 +327,17 @@ def set_address(address: str):
                         town = address[max(0, idx - 2) : idx + 1]
                         break
 
-            # 確保台灣常見的「台」轉成氣象署官方認定的「臺」
             if city.startswith("台"):
                 city = "臺" + city[1:]
 
-            # 寫入系統全域變數
+            # 成功更新全域變數
             CURRENT_LOCATION["address"] = address
             CURRENT_LOCATION["city"] = city
             CURRENT_LOCATION["town"] = town
             CURRENT_LOCATION["lon"] = lon
             CURRENT_LOCATION["lat"] = lat
 
-            # 立刻重新執行一次抓取，讓家裡衣架瞬間同步
+            # 讓背景天氣排程立刻刷新
             fetch_weather_job()
 
             return {
@@ -327,10 +345,10 @@ def set_address(address: str):
                 "city": city,
                 "town": town,
                 "lon": lon,
-                "lat": lat,
+                "lat": lat
             }
         else:
-            return {"status": "FAILED", "message": "Address not found"}
+            return {"status": "FAILED", "message": "即使模糊搜尋也找不到此區域，請檢查地名拼字"}
     except Exception as e:
         return {"status": "ERROR", "message": str(e)}
 
