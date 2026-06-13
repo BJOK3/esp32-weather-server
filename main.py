@@ -238,25 +238,6 @@ def get_home_page():
         <div class="card">
             <h2 style="text-align: center; color: #333; margin-top: 0; font-size: 22px;">衣架守護區域控制台 🛰️</h2>
             
-            <div class="section-title">⚙️ 核心運作模式設定</div>
-            <div style="display: flex; gap: 10px;">
-                <button class="btn-ctrl btn-mode-auto" onclick="setSystemMode('AUTO')">🤖 切換：自動AI守護</button>
-                <button class="btn-ctrl btn-mode-manual" onclick="setSystemMode('MANUAL')">📱 切換：純手動遙控</button>
-            </div>
-            
-            <div id="manualPanel" style="margin-top: 15px; display: none;">
-                <div class="section-title" style="color: #fd7e14; border-left-color: #fd7e14;">🕹️ 手動即時遙控面板</div>
-                <div style="display: flex; gap: 10px;">
-                    <button class="btn-ctrl btn-close-hang" onclick="toggleControl('CLOSE')">
-                        🔼 切換：收衣
-                    </button>
-                    <button class="btn-ctrl btn-open-hang" onclick="toggleControl('OPEN')">
-                        🔽 切換：展開
-                    </button>
-                </div>
-                <button class="btn-ctrl btn-stop-hang" onclick="sendControl('STOP')">⏹️ 停止馬達</button>
-            </div>
-            
             <hr>
             
             <div class="section-title">捷徑：手機晶片自動定位</div>
@@ -360,32 +341,7 @@ def get_home_page():
             }
             setInterval(refreshStatus, 4000);
 
-            function setSystemMode(mode) {
-                fetch(`/api/set_mode?mode=${mode}`)
-                    .then(res => res.json())
-                    .then(data => {
-                        var panel = document.getElementById("manualPanel");
-                        if (data.mode === "MANUAL") {
-                            panel.style.display = "block";
-                            alert("已切換為【純手動遙控模式】，此時 AI 守護暫停。");
-                        } else {
-                            panel.style.display = "none";
-                            alert("已開啟【🤖 自動 AI 守護模式】。");
-                        }
-                        refreshStatus();
-                    });
-            }
-
-            function checkModeOnLoad() {
-                fetch('/api/get_current_mode')
-                    .then(res => res.json())
-                    .then(data => {
-                        if(data.mode === "MANUAL") {
-                            document.getElementById("manualPanel").style.display = "block";
-                        }
-                    });
-            }
-
+            
             function sendControl(cmd) {
                 fetch(`/api/remote_control?cmd=${cmd}`)
                     .then(res => res.json())
@@ -459,26 +415,7 @@ def get_home_page():
     return HTMLResponse(content=final_html, status_code=200)
 
 
-# ================= 📱 API：模式切換 =================
-@app.get("/api/set_mode")
-def set_mode(mode: str):
-    global SYSTEM_MODE, REMOTE_COMMAND
-    if mode in ["AUTO", "MANUAL"]:
-        SYSTEM_MODE = mode
-        if mode == "AUTO":
-            REMOTE_COMMAND = "STOP" 
-    return {"status": "SUCCESS", "mode": SYSTEM_MODE}
 
-@app.get("/api/get_current_mode")
-def get_current_mode():
-    return {"mode": SYSTEM_MODE}
-
-@app.get("/api/remote_control")
-def remote_control(cmd: str):
-    global REMOTE_COMMAND
-    if cmd in ["CLOSE", "OPEN", "STOP"]:
-        REMOTE_COMMAND = cmd
-    return {"status": "SUCCESS", "command": REMOTE_COMMAND}
 
 
 # ================= 🌐 擴充狀態 API (唯一保留的正確版) =================
