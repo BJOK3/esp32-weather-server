@@ -250,7 +250,7 @@ def get_home_page():
             
             <div class="form-group">
                 <label>1. 自訂顯示地名</label>
-                <input type="text" id="nameInput" value="__DISPLAY_NAME__">
+                <input type="text" id="nameInput" placeholder="請輸入地名（可選）">
             </div>
 
             <div style="display: flex; gap: 10px;">
@@ -410,7 +410,8 @@ def get_home_page():
     </html>
     """
     latlon_str = f"{CURRENT_LOCATION['lat']},{CURRENT_LOCATION['lon']}" if CURRENT_LOCATION['lat'] != 0.0 else ""
-    final_html = html_template.replace("__DISPLAY_NAME__", CURRENT_LOCATION["display_name"])
+    display_name = CURRENT_LOCATION["display_name"] or ""
+    final_html = html_template.replace("__DISPLAY_NAME__", display_name)
     final_html = final_html.replace("__LAT_LON_VALUE__", latlon_str)
     return HTMLResponse(content=final_html, status_code=200)
 
