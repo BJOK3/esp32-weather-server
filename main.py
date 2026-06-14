@@ -42,18 +42,12 @@ REMOTE_COMMAND = "STOP"   # 手動模式指令："STOP", "CLOSE", "OPEN"
 
 
 def fetch_weather_job():
-    global current_cached_status, CURRENT_LOCATION
-    
-    # 檢查是否設定位置
+    global current_cached_status, CURRENT_LOCATION, last_action, REMOTE_COMMAND
+
     if not CURRENT_LOCATION["city"] or not CURRENT_LOCATION["town"]:
         current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
         return
 
-    # 預設值初始化
-    pop, rain_10m, rain_1hr, wind_dir, wind_speed, humidity = 0, 0.0, 0.0, 0.0, 0.0, 50
-    radar_verdict = "SAFE"
-
-    # 定義輔助函式，過濾 -99 無效值
     def safe_float(val, default=0.0):
         try:
             f = float(val)
@@ -61,7 +55,11 @@ def fetch_weather_job():
         except (ValueError, TypeError):
             return default
 
-    city_name, town_name = CURRENT_LOCATION["city"], CURRENT_LOCATION["town"]
+    city_name = CURRENT_LOCATION["city"]
+    town_name = CURRENT_LOCATION["town"]
+    pop, rain_10m, rain_1hr = 0, 0.0, 0.0
+    wind_speed = 0.0
+    radar_verdict = "SAFE"
 
     try:
         # 1. 抓取雨量 (O-A0002-001)
@@ -72,14 +70,10 @@ def fetch_weather_job():
             target = next((s for s in stations if s["GeoInfo"]["TownName"] == town_name), None)
             if not target:
                 target = next((s for s in stations if s["GeoInfo"]["CountyName"] == city_name), None)
-            
             if target:
-                # 根據你提供的 JSON 結構：RainfallElement -> Past10Min -> Precipitation
                 rain_el = target.get("RainfallElement", {})
-                raw_10m = rain_el.get("Past10Min", {}).get("Precipitation")
-                raw_1hr = rain_el.get("Past1hr", {}).get("Precipitation")
-                rain_10m = safe_float(raw_10m)
-                rain_1hr = safe_float(raw_1hr)
+                rain_10m = safe_float(rain_el.get("Past10Min", {}).get("Precipitation"))
+                rain_1hr = safe_float(rain_el.get("Past1hr", {}).get("Precipitation"))
 
         # 2. 抓取環境參數 (O-A0003-001)
         env_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={AUTH_KEY}&format=JSON"
@@ -89,137 +83,101 @@ def fetch_weather_job():
             target = next((s for s in stations if s["GeoInfo"]["TownName"] == town_name), None)
             if not target:
                 target = next((s for s in stations if s["GeoInfo"]["CountyName"] == city_name), None)
-            
             if target:
                 obs = target.get("WeatherElement", {})
-                humidity = int(safe_float(obs.get("RelativeHumidity", 50)))
                 wind_speed = safe_float(obs.get("WindSpeed", 0.0))
-                wind_dir = safe_float(obs.get("WindDirection", 0.0))
 
-        # 這裡繼續你原本的雷達判斷與 AI 趨勢邏輯...
-        # 記得：判斷收衣請使用 rain_1hr > 2.0 (累積雨量) 會比 rain_10m 更穩
-
-
-
-        # -----------------------------------------------------------------
-        # 2. 抓取預報 (F-C0032-001: 三十六小時天氣預報)
+        # 3. 抓取預報 (F-C0032-001)
         forecast_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={AUTH_KEY}&elementName=PoP&format=JSON"
         pop_res = requests.get(forecast_url, timeout=8, verify=False)
-        
         if pop_res.status_code == 200:
-            data = pop_res.json()
-            # 找到對應的縣市 (locationName)
-            locations = data.get("records", {}).get("location", [])
+            locations = pop_res.json().get("records", {}).get("location", [])
             city_data = next((loc for loc in locations if loc.get("locationName") == city_name), None)
-            
             if city_data:
-                # 取得 weatherElement 中的 PoP
                 elements = city_data.get("weatherElement", [])
                 pop_elem = next((el for el in elements if el.get("elementName") == "PoP"), None)
-                
                 if pop_elem and "time" in pop_elem:
-                    # 取得第一個時間區段的數值 (最接近當下的預報)
-                    first_time_period = pop_elem["time"][0]
-                    val = first_time_period.get("parameter", {}).get("parameterName", "0")
+                    val = pop_elem["time"][0].get("parameter", {}).get("parameterName", "0")
                     pop = int(val) if val.isdigit() else 0
                     print(f"[CWA 預報] {city_name} 降雨機率: {pop}%")
 
-        # -----------------------------------------------------------------
-        # 3. 即時降雨雷達圖：兩階段自動下載與像素掃描 (O-A0058-003)
-        # -----------------------------------------------------------------
+        # 4. 雷達圖分析 (O-A0058-003)
         radar_api_url = f"https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-A0058-003?Authorization={AUTH_KEY}&downloadType=WEB&format=JSON"
-        
         try:
             radar_res = requests.get(radar_api_url, timeout=12, verify=False)
             if radar_res.status_code == 200:
-                data = radar_res.json()
-                
-                # 📍 第一階段：精準解析 JSON 結構 (cwaopendata -> dataset -> resource -> ProductURL)
-                img_url = data.get("cwaopendata", {}).get("dataset", {}).get("resource", {}).get("ProductURL")
-                
+                img_url = radar_res.json().get("cwaopendata", {}).get("dataset", {}).get("resource", {}).get("ProductURL")
                 if img_url:
-                    # 📍 第二階段：下載圖片並進行記憶體內分析
                     img_res = requests.get(img_url, timeout=15, verify=False)
                     img = Image.open(BytesIO(img_res.content)).convert("RGB")
-                    
                     lat_val = CURRENT_LOCATION["lat"]
                     lon_val = CURRENT_LOCATION["lon"]
-                    
                     if lat_val > 0 and lon_val > 0:
-                        # 📍 座標映射：根據 JSON 中提供的範圍 (Lon: 118-124, Lat: 20.5-26.5) 與圖片解析度 (3600x3600)
-                        # 將經緯度轉換為圖片像素座標
                         pixel_x = int((lon_val - 118.0) / (124.0 - 118.0) * 3600)
                         pixel_y = int((26.5 - lat_val) / (26.5 - 20.5) * 3600)
-                        
                         danger_pixels = 0
-                        # 📍 像素分析：掃描目標點周圍 5x5 像素範圍
                         for dx in range(-5, 6):
                             for dy in range(-5, 6):
                                 tx, ty = pixel_x + dx, pixel_y + dy
                                 if 0 <= tx < 3600 and 0 <= ty < 3600:
                                     r, g, b = img.getpixel((tx, ty))
-                                    # 根據圖例，有色彩的區域代表有降雨回波
-                                    # 如果 R, G, B 分量高於 50，即判定為有降雨訊號
                                     if r > 50 or g > 50 or b > 50:
                                         danger_pixels += 1
-                        
-                        # 📍 判定邏輯：超過 8 個像素點顯示降雨，即判定為 DANGER
-                        if danger_pixels >= 8:
-                            radar_verdict = "DANGER"
-                            print(f"⚠️ [雷達自動分析] 偵測到強烈回波 (危險點數: {danger_pixels})")
-                        else:
-                            radar_verdict = "SAFE"
-                            
+                        radar_verdict = "DANGER" if danger_pixels >= 8 else "SAFE"
+                        print(f"[雷達] 危險點數: {danger_pixels} → {radar_verdict}")
+        except Exception as e:
+            print(f"❌ [雷達分析失敗] {e}")
+            radar_verdict = "SAFE"
 
-
-        # ================= 📈 雨勢趨勢 AI (決策邏輯) =================
-        # 初始化評分參數
+        # 5. 決策邏輯
         rain_trend_score = 0
+        if rain_10m > 1.0:
+            rain_trend_score += 3
+        elif rain_10m > 0.3:
+            rain_trend_score += 2
+        elif rain_10m > 0:
+            rain_trend_score += 1
+        if radar_verdict == "DANGER":
+            rain_trend_score += 3
+        if pop >= 80:
+            rain_trend_score += 2
+        elif pop >= 60:
+            rain_trend_score += 1
+
+        if rain_trend_score >= 6:
+            trend_state = "RISING_FAST"
+        elif rain_trend_score >= 4:
+            trend_state = "RISING"
+        elif rain_trend_score >= 2:
+            trend_state = "STABLE"
+        else:
+            trend_state = "CLEARING"
+
         risk_score = 0
-        
-        # A. 計算雨勢趨勢分
-        if rain_10m > 1.0: rain_trend_score += 3
-        elif rain_10m > 0.3: rain_trend_score += 2
-        elif rain_10m > 0: rain_trend_score += 1
-        
-        if radar_verdict == "DANGER": rain_trend_score += 3
-        
-        if pop >= 80: rain_trend_score += 2
-        elif pop >= 60: rain_trend_score += 1
+        if trend_state == "RISING_FAST":
+            risk_score += 3
+        elif trend_state == "RISING":
+            risk_score += 2
+        elif trend_state == "STABLE":
+            risk_score += 1
 
-        # B. 判定趨勢狀態
-        if rain_trend_score >= 6: trend_state = "RISING_FAST"
-        elif rain_trend_score >= 4: trend_state = "RISING"
-        elif rain_trend_score >= 2: trend_state = "STABLE"
-        else: trend_state = "CLEARING"
-
-        # C. 計算風險分數
-        if trend_state == "RISING_FAST": risk_score += 3
-        elif trend_state == "RISING": risk_score += 2
-        elif trend_state == "STABLE": risk_score += 1
-        
-        # D. 最終動作決策 (關鍵整合點)
-        # 只要風險分數達到一定門檻，就觸發收衣 (CLOSE)
         action_advice = "CLOSE" if risk_score >= 4 else "OPEN"
-        
-        # 4. 打包數據更新快取
+
+        # 6. 更新狀態
         now_str = datetime.datetime.now(TW_TZ).strftime("%H:%M:%S")
-        global last_action, REMOTE_COMMAND # 確保有宣告 REMOTE_COMMAND
-        
-        # 🟢 強制把計算結果同步給 REMOTE_COMMAND，這樣狀態才會變！
-        REMOTE_COMMAND = action_advice 
-        
+        REMOTE_COMMAND = action_advice
         if action_advice != last_action:
             event_queue.append(f"{now_str} - 動作變更為: {action_advice} (風險分:{risk_score})")
             last_action = action_advice
-            
+
         current_cached_status = (
             f"(Loc:{city_name}{town_name} 於 {now_str} 更新) | "
             f"PoP:{pop}% | Rain10m:{rain_10m}mm | Radar:{radar_verdict} | Risk:{risk_score}"
         )
+        print(f"📡 [排程成功] {current_cached_status}")
 
     except Exception as e:
-        print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
+        print(f"❌ [排程失敗] {str(e)}")
         current_cached_status = f"CLOSE (Error:聯動異常 {str(e)})"
 
 # ================= ⏰ 自動定時排程 =================
