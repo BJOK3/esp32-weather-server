@@ -209,16 +209,19 @@ def fetch_weather_job():
         
         # 4. 打包數據更新快取
         now_str = datetime.datetime.now(TW_TZ).strftime("%H:%M:%S")
-        global last_action
+        global last_action, REMOTE_COMMAND # 確保有宣告 REMOTE_COMMAND
+        
+        # 🟢 強制把計算結果同步給 REMOTE_COMMAND，這樣狀態才會變！
+        REMOTE_COMMAND = action_advice 
+        
         if action_advice != last_action:
             event_queue.append(f"{now_str} - 動作變更為: {action_advice} (風險分:{risk_score})")
             last_action = action_advice
             
         current_cached_status = (
-            f"{action_advice} (Loc:{city_name}{town_name} 於 {now_str} 更新) | "
+            f"(Loc:{city_name}{town_name} 於 {now_str} 更新) | "
             f"PoP:{pop}% | Rain10m:{rain_10m}mm | Radar:{radar_verdict} | Risk:{risk_score}"
         )
-        print(f"📡 [排程大腦成功] {current_cached_status}")
 
     except Exception as e:
         print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
