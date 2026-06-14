@@ -135,7 +135,7 @@ def fetch_weather_job():
             radar_verdict = "SAFE"
 
 # ==================== 修改位置：fetch_weather_job() 內的決策邏輯 ====================
-        # 5. 決策邏輯
+                # 5. 決策邏輯
         rain_trend_score = 0
         if rain_10m > 1.0:
             rain_trend_score += 3
@@ -161,9 +161,20 @@ def fetch_weather_job():
         elif pop >= 60:
             rain_trend_score += 1
 
-        # ... (trend_state 保持不變)
+        # 根據 rain_trend_score 決定趨勢狀態
+        if rain_trend_score >= 6:
+            trend_state = "RISING_FAST"
+        elif rain_trend_score >= 4:
+            trend_state = "RISING"
+        elif rain_trend_score >= 2:
+            trend_state = "STABLE"
+        else:
+            trend_state = "CLEARING"
 
+        # 風險分數計算
         risk_score = 0
+
+        # 趨勢狀態基礎分
         if trend_state == "RISING_FAST":
             risk_score += 3
         elif trend_state == "RISING":
@@ -174,13 +185,13 @@ def fetch_weather_job():
         # 額外加分項
         if radar_verdict == "DANGER":
             risk_score += 1
-        if rain_10m > 0.3 or rain_1hr > 1.0:   # ← 修改這裡
+        if rain_10m > 0.3 or rain_1hr > 1.0:
             risk_score += 1
         if pop >= 80:
             risk_score += 1
         if wind_speed > 5.0:
             risk_score += 1
-        if rain_1hr > 3.0:                     # ← 新增
+        if rain_1hr > 3.0:
             risk_score += 1
 
         action_advice = "CLOSE" if risk_score >= 4 else "OPEN"
