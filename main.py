@@ -58,7 +58,7 @@ def fetch_weather_job():
     city_name = CURRENT_LOCATION["city"]
     town_name = CURRENT_LOCATION["town"]
     pop, rain_10m, rain_1hr = 0, 0.0, 0.0
-    wind_speed = 0.0
+    wind_speed, wind_dir, humidity = 0.0, 0.0, 50
     radar_verdict = "SAFE"
 
     try:
@@ -83,9 +83,14 @@ def fetch_weather_job():
             target = next((s for s in stations if s["GeoInfo"]["TownName"] == town_name), None)
             if not target:
                 target = next((s for s in stations if s["GeoInfo"]["CountyName"] == city_name), None)
+            if not target:
+                print(f"[WARN] 找不到 {city_name}{town_name} 的氣象站資料")
             if target:
                 obs = target.get("WeatherElement", {})
+                print(f"[DEBUG] WeatherElement keys: {list(obs.keys())}")  # 加這行看看有哪些欄位
+                humidity = int(safe_float(obs.get("RelativeHumidity", 50)))
                 wind_speed = safe_float(obs.get("WindSpeed", 0.0))
+                wind_dir = safe_float(obs.get("WindDirection", 0.0))
 
         # 3. 抓取預報 (F-C0032-001)
         forecast_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={AUTH_KEY}&elementName=PoP&format=JSON"
@@ -154,12 +159,24 @@ def fetch_weather_job():
             trend_state = "CLEARING"
 
         risk_score = 0
+
+        # 趨勢狀態基礎分
         if trend_state == "RISING_FAST":
             risk_score += 3
         elif trend_state == "RISING":
             risk_score += 2
         elif trend_state == "STABLE":
             risk_score += 1
+
+        # 額外加分項
+        if radar_verdict == "DANGER":
+            risk_score += 1          # 雷達有回波再加 1
+        if rain_10m > 0.3:
+            risk_score += 1          # 現在已在下雨再加 1
+        if pop >= 80:
+            risk_score += 1          # 高降雨機率再加 1
+        if wind_speed > 5.0:
+            risk_score += 1          # 強風再加 1
 
         action_advice = "CLOSE" if risk_score >= 4 else "OPEN"
 
@@ -172,7 +189,9 @@ def fetch_weather_job():
 
         current_cached_status = (
             f"(Loc:{city_name}{town_name} 於 {now_str} 更新) | "
-            f"PoP:{pop}% | Rain10m:{rain_10m}mm | Radar:{radar_verdict} | Risk:{risk_score}"
+            f"PoP:{pop}% | Rain10m:{rain_10m}mm | Rain1hr:{rain_1hr}mm | "
+            f"Radar:{radar_verdict} | Wind:{wind_speed}m/s | "
+            f"Humidity:{humidity}% | Risk:{risk_score}"
         )
         print(f"📡 [排程成功] {current_cached_status}")
 
@@ -183,7 +202,7 @@ def fetch_weather_job():
 # ================= ⏰ 自動定時排程 =================
 scheduler = BackgroundScheduler()
 # 每 10 分鐘自動執行一次氣象檢查
-scheduler.add_job(fetch_weather_job, 'interval', minutes=10)
+scheduler.add_job(fetch_weather_job, 'interval', minutes=3)
 scheduler.start()
 
 
