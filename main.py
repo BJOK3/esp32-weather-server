@@ -134,6 +134,7 @@ def fetch_weather_job():
             print(f"❌ [雷達分析失敗] {e}")
             radar_verdict = "SAFE"
 
+# ==================== 修改位置：fetch_weather_job() 內的決策邏輯 ====================
         # 5. 決策邏輯
         rain_trend_score = 0
         if rain_10m > 1.0:
@@ -142,6 +143,17 @@ def fetch_weather_job():
             rain_trend_score += 2
         elif rain_10m > 0:
             rain_trend_score += 1
+
+        # 新增：Past1hr 雨量判斷（更能看出持續降雨）
+        if rain_1hr > 5.0:
+            rain_trend_score += 4
+        elif rain_1hr > 2.0:
+            rain_trend_score += 3
+        elif rain_1hr > 0.5:
+            rain_trend_score += 2
+        elif rain_1hr > 0:
+            rain_trend_score += 1
+
         if radar_verdict == "DANGER":
             rain_trend_score += 3
         if pop >= 80:
@@ -149,18 +161,9 @@ def fetch_weather_job():
         elif pop >= 60:
             rain_trend_score += 1
 
-        if rain_trend_score >= 6:
-            trend_state = "RISING_FAST"
-        elif rain_trend_score >= 4:
-            trend_state = "RISING"
-        elif rain_trend_score >= 2:
-            trend_state = "STABLE"
-        else:
-            trend_state = "CLEARING"
+        # ... (trend_state 保持不變)
 
         risk_score = 0
-
-        # 趨勢狀態基礎分
         if trend_state == "RISING_FAST":
             risk_score += 3
         elif trend_state == "RISING":
@@ -170,13 +173,15 @@ def fetch_weather_job():
 
         # 額外加分項
         if radar_verdict == "DANGER":
-            risk_score += 1          # 雷達有回波再加 1
-        if rain_10m > 0.3:
-            risk_score += 1          # 現在已在下雨再加 1
+            risk_score += 1
+        if rain_10m > 0.3 or rain_1hr > 1.0:   # ← 修改這裡
+            risk_score += 1
         if pop >= 80:
-            risk_score += 1          # 高降雨機率再加 1
+            risk_score += 1
         if wind_speed > 5.0:
-            risk_score += 1          # 強風再加 1
+            risk_score += 1
+        if rain_1hr > 3.0:                     # ← 新增
+            risk_score += 1
 
         action_advice = "CLOSE" if risk_score >= 4 else "OPEN"
 
