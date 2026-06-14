@@ -190,8 +190,8 @@ def fetch_weather_job():
         current_cached_status = (
             f"(Loc:{city_name}{town_name} 於 {now_str} 更新) | "
             f"PoP:{pop}% | Rain10m:{rain_10m}mm | Rain1hr:{rain_1hr}mm | "
-            f"Radar:{radar_verdict} | Wind:{wind_speed}m/s | "
-            f"Humidity:{humidity}% | Risk:{risk_score}"
+            f"Radar:{radar_verdict} | Wind:{wind_dir}deg | WSpd:{wind_speed}m/s | "
+            f"Humid:{humidity}% | Risk:{risk_score}"
         )
         print(f"📡 [排程成功] {current_cached_status}")
 
@@ -257,30 +257,22 @@ def get_home_page():
             
             <hr>
 
-            <div class="section-title">手動設定：自訂位置</div>
-            
-            <div class="form-group">
-                <label>1. 自訂顯示地名</label>
-                <input type="text" id="nameInput" placeholder="請輸入地名（可選）">
-            </div>
-
             <div style="display: flex; gap: 10px;">
                 <div class="form-group" style="flex: 1;">
-                    <label>2. 縣市選單</label>
+                    <label>1. 縣市選單</label>
                     <select id="citySelect" onchange="updateTownDropdown()">
                         <option value="">--請選擇--</option>
                     </select>
                 </div>
                 <div class="form-group" style="flex: 1;">
-                    <label>3. 鄉鎮市區</label>
+                    <label>2. 鄉鎮市區</label>
                     <select id="townSelect">
                         <option value="">--請選擇--</option>
                     </select>
                 </div>
             </div>
-
             <div class="form-group">
-                <label>4. 精準經緯度座標 (選填)</label>
+                <label>3. 精準經緯度座標 (選填)</label>
                 <input type="text" id="latlonInput" value="__LAT_LON_VALUE__">
             </div>
 
