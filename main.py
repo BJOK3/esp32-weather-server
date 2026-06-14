@@ -25,13 +25,13 @@ app = FastAPI()
 AUTH_KEY = "CWA-02744568-A84E-49F7-8496-8E9D0834D8C2"
 TW_TZ = ZoneInfo("Asia/Taipei")
 
-# ================= 🗺️ 全域變數設定 =================
+# ================= 🗺️ 修改全域變數預設值 =================
 CURRENT_LOCATION = {
-    "display_name": "",  
-    "city": "",          
-    "town": "",          
-    "lon": 0.0,          
-    "lat": 0.0,          
+    "display_name": "南投縣埔里鎮",  
+    "city": "南投縣",         
+    "town": "埔里鎮",         
+    "lon": 120.96,            # 埔里經度
+    "lat": 23.97,             # 埔里緯度
 }
 
 current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
@@ -224,7 +224,6 @@ def fetch_weather_job():
         print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
         current_cached_status = f"CLOSE (Error:聯動異常 {str(e)})"
 
-
 # ================= ⏰ 自動定時排程 =================
 scheduler = BackgroundScheduler()
 # 每 10 分鐘自動執行一次氣象檢查
@@ -401,26 +400,6 @@ def get_home_page():
                     });
                 }
             }
-            
-            // ... (原本的 taiwanData 與其他設定保持不變)
-
-            // 新增：切換型邏輯函式
-            function toggleControl(targetCmd) {
-                fetch('/hanger/status')
-                    .then(res => res.text())
-                    .then(text => {
-                        // 檢查目前後端紀錄的 CMD 是否已經是 targetCmd
-                        // 我們從 text 裡面解析出 "CMD:XXXX" 來比對
-                        let currentCmd = "";
-                        if (text.includes("CMD:CLOSE")) currentCmd = "CLOSE";
-                        if (text.includes("CMD:OPEN")) currentCmd = "OPEN";
-                        if (text.includes("CMD:STOP")) currentCmd = "STOP";
-
-                        // 只有當目前的指令不是我們要的那個時，才發送指令；否則發送 STOP
-                        let cmdToSend = (currentCmd === targetCmd) ? 'STOP' : targetCmd;
-                        sendControl(cmdToSend);
-                    });
-            }
 
             // 更新：單純發送指令的函式
             function sendControl(cmd) {
@@ -495,6 +474,8 @@ def set_by_gps(lat: float, lon: float):
 
     # 🟢 這裡呼叫就不會再 NameError 了，因為它已被定義在上方
     fetch_weather_job()
+    
+    # 🟢 直接回傳，不再手動判斷那些讀不到的變數
     return {
         "status": "SUCCESS", 
         "lon": lon, 
@@ -536,6 +517,22 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     # 🟢 正常呼叫
     fetch_weather_job()
     return {"status": "SUCCESS", "name": name, "mode": mode}
+
+
+@app.get("/api/event")
+def get_event():
+    import time
+
+    if event_queue:
+        return {"action": event_queue.popleft()}
+
+    start = time.time()
+    while time.time() - start < 25:
+        if event_queue:
+            return {"action": event_queue.popleft()}
+        time.sleep(0.5)
+
+    return {"action": "NONE"}
 
 
 if __name__ == "__main__":
