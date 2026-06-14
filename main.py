@@ -381,12 +381,33 @@ def get_home_page():
             
 
             function saveManualSettings() {
-                var name = document.getElementById("nameInput").value.trim();
                 var city = document.getElementById("citySelect").value;
                 var town = document.getElementById("townSelect").value;
-                if (!name) name = city + town;
-                fetch(`/api/set_manual?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=0&lon=0`)
-                    .then(res => res.json()).then(data => { alert("設定儲存成功！"); refreshStatus(); });
+                var latlon = document.getElementById("latlonInput").value.trim();
+                
+                if (!city || !town) { 
+                    alert("請選擇縣市與鄉鎮！"); 
+                    return; 
+                }
+                
+                var name = city + town;
+                var lat = 0, lon = 0;
+                
+                if (latlon) {
+                    var parts = latlon.split(",");
+                    if (parts.length === 2) {
+                        lat = parseFloat(parts[0].trim());
+                        lon = parseFloat(parts[1].trim());
+                    }
+                }
+                
+                fetch(`/api/set_manual?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
+                    .then(res => res.json())
+                    .then(data => { 
+                        alert("設定儲存成功！"); 
+                        refreshStatus(); 
+                    })
+                    .catch(err => alert("儲存失敗：" + err));
             }
         </script>
     </body>
