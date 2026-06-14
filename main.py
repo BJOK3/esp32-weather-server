@@ -45,10 +45,6 @@ def fetch_weather_job():
 
 # ================= 🌤️ 氣象偵測核心函式 (修復縮排錯誤) =================
 def fetch_weather_job():
-    """ 
-    定時或手動觸發的天氣檢查大腦。
-    自動串接氣象署 API 與雷達圖分析，並將結果封裝，供 ESP32 下載。
-    """
     global current_cached_status, CURRENT_LOCATION
     
     # 檢查是否設定位置
@@ -56,83 +52,83 @@ def fetch_weather_job():
         current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
         return
 
-    # 預設天氣初始值 (防止 API 局部出錯時程式崩潰)
-    pop = 0
-    rain_10m = 0.0
-    wind_dir = 0.0
-    wind_speed = 0.0
-    humidity = 50
+    # 預設值初始化
+    pop, rain_10m, rain_1hr, wind_dir, wind_speed, humidity = 0, 0.0, 0.0, 0.0, 0.0, 50
     radar_verdict = "SAFE"
 
-    city_name = CURRENT_LOCATION["city"]
-    town_name = CURRENT_LOCATION["town"]
-    display_name = CURRENT_LOCATION["display_name"]
+    # 定義輔助函式，過濾 -99 無效值
+    def safe_float(val, default=0.0):
+        try:
+            f = float(val)
+            return f if f >= 0 else default
+        except (ValueError, TypeError):
+            return default
+
+    city_name, town_name = CURRENT_LOCATION["city"], CURRENT_LOCATION["town"]
 
     try:
-        # 🟢 這裡開始的所有程式碼，前面都必須有 8 個空格（相對於最左邊）
-        # 也就是相對於 try: 必須往右縮排 4 個空格！
-        
-        # -----------------------------------------------------------------
-        # 1. 抓取中央氣象署 (CWA) 鄉鎮天氣觀測資料
-        # -----------------------------------------------------------------
-        cwa_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={AUTH_KEY}&format=JSON"
-        res = requests.get(cwa_url, timeout=8, verify=False)
-        
-        if res.status_code == 200:
-            data = res.json()
-            stations = data.get("records", {}).get("Station", [])
-            target_station = None
-
-            for s in stations:
-                geo = s.get("GeoInfo", {})
-                if geo.get("CountyName") == city_name and geo.get("TownName") == town_name:
-                    target_station = s
-                    break
+        # 1. 抓取雨量 (O-A0002-001)
+        rain_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization={AUTH_KEY}&format=JSON"
+        res_rain = requests.get(rain_url, timeout=8, verify=False)
+        if res_rain.status_code == 200:
+            stations = res_rain.json().get("records", {}).get("Station", [])
+            target = next((s for s in stations if s["GeoInfo"]["TownName"] == town_name), None)
+            if not target:
+                target = next((s for s in stations if s["GeoInfo"]["CountyName"] == city_name), None)
             
-            if not target_station:
-                for s in stations:
-                    if s.get("GeoInfo", {}).get("CountyName") == city_name:
-                        target_station = s
-                        break
+            if target:
+                # 根據你提供的 JSON 結構：RainfallElement -> Past10Min -> Precipitation
+                rain_el = target.get("RainfallElement", {})
+                raw_10m = rain_el.get("Past10Min", {}).get("Precipitation")
+                raw_1hr = rain_el.get("Past1hr", {}).get("Precipitation")
+                rain_10m = safe_float(raw_10m)
+                rain_1hr = safe_float(raw_1hr)
 
-            if target_station:
-                obs = target_station.get("WeatherElement", {})
-                humidity = int(obs.get("RelativeHumidity", 50))
-                rain_10m = float(obs.get("Now", {}).get("Precipitation10Min", 0.0))
-                if rain_10m < 0: rain_10m = 0.0
-                wind_speed = float(obs.get("WindSpeed", 0.0))
-                wind_dir = float(obs.get("WindDirection", 0.0))
-                print(f"[CWA 測站成功] 鎖定觀測站: {target_station.get('StationName')}")
+        # 2. 抓取環境參數 (O-A0003-001)
+        env_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0003-001?Authorization={AUTH_KEY}&format=JSON"
+        res_env = requests.get(env_url, timeout=8, verify=False)
+        if res_env.status_code == 200:
+            stations = res_env.json().get("records", {}).get("Station", [])
+            target = next((s for s in stations if s["GeoInfo"]["TownName"] == town_name), None)
+            if not target:
+                target = next((s for s in stations if s["GeoInfo"]["CountyName"] == city_name), None)
+            
+            if target:
+                obs = target.get("WeatherElement", {})
+                humidity = int(safe_float(obs.get("RelativeHumidity", 50)))
+                wind_speed = safe_float(obs.get("WindSpeed", 0.0))
+                wind_dir = safe_float(obs.get("WindDirection", 0.0))
+
+        # 這裡繼續你原本的雷達判斷與 AI 趨勢邏輯...
+        # 記得：判斷收衣請使用 rain_1hr > 2.0 (累積雨量) 會比 rain_10m 更穩
+
+    except Exception as e:
+        print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
+        current_cached_status = f"CLOSE (Error:氣象站聯動異常 {str(e)})"
+        # ... 接下來繼續執行你後續的預報與雷達邏輯
 
         # -----------------------------------------------------------------
-        # 2. 抓取預報資料庫 (取得未來幾小時內的降雨機率 PoP)
-        # -----------------------------------------------------------------
-        forecast_mapping = {
-            "宜蘭縣": "F-D0047-001", "桃園市": "F-D0047-005", "新竹縣": "F-D0047-009",
-            "苗栗縣": "F-D0047-013", "彰化縣": "F-D0047-017", "南投縣": "F-D0047-021",
-            "雲林縣": "F-D0047-025", "嘉義縣": "F-D0047-029", "屏東縣": "F-D0047-033",
-            "臺東縣": "F-D0047-037", "花蓮縣": "F-D0047-041", "澎湖縣": "F-D0047-045",
-            "基隆市": "F-D0047-049", "新竹市": "F-D0047-053", "嘉義市": "F-D0047-057",
-            "臺北市": "F-D0047-061", "高雄市": "F-D0047-065", "新北市": "F-D0047-069",
-            "臺中市": "F-D0047-073", "臺南市": "F-D0047-077", "金門縣": "F-D0047-081",
-            "連江縣": "F-D0047-085"
-        }
-        
-        fid = forecast_mapping.get(city_name, "F-D0047-089")
-        pop_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/{fid}?Authorization={AUTH_KEY}&elementName=PoP6h&format=JSON"
-        pop_res = requests.get(pop_url, timeout=8, verify=False)
+        # 2. 抓取預報 (F-C0032-001: 三十六小時天氣預報)
+        forecast_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={AUTH_KEY}&elementName=PoP&format=JSON"
+        pop_res = requests.get(forecast_url, timeout=8, verify=False)
         
         if pop_res.status_code == 200:
-            pop_data = pop_res.json()
-            locations = pop_data.get("records", {}).get("locations", [{}])[0].get("location", [])
-            for loc in locations:
-                if loc.get("locationName") == town_name:
-                    elems = loc.get("weatherElement", [])
-                    if elems:
-                        val = elems[0].get("time", [{}])[0].get("elementValue", [{}])[0].get("value", "0")
-                        pop = int(val) if val and val != " " else 0
-                    break
-
+            data = pop_res.json()
+            # 找到對應的縣市 (locationName)
+            locations = data.get("records", {}).get("location", [])
+            city_data = next((loc for loc in locations if loc.get("locationName") == city_name), None)
+            
+            if city_data:
+                # 取得 weatherElement 中的 PoP
+                elements = city_data.get("weatherElement", [])
+                pop_elem = next((el for el in elements if el.get("elementName") == "PoP"), None)
+                
+                if pop_elem and "time" in pop_elem:
+                    # 取得第一個時間區段的數值 (最接近當下的預報)
+                    first_time_period = pop_elem["time"][0]
+                    val = first_time_period.get("parameter", {}).get("parameterName", "0")
+                    pop = int(val) if val.isdigit() else 0
+                    print(f"[CWA 預報] {city_name} 降雨機率: {pop}%")
         # -----------------------------------------------------------------
         # 3. 即時降雨雷達圖切片 (雷達回波像素級掃描技術)
         # -----------------------------------------------------------------
