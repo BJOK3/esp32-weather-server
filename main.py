@@ -392,7 +392,7 @@ def get_home_page():
                 var name = document.getElementById("nameInput").value.trim();
                 var city = document.getElementById("citySelect").value;
                 var town = document.getElementById("townSelect").value;
-                if(!name || !city || !town) { alert("請填寫地名與選擇縣市鄉鎮！"); return; }
+                if (!name) name = city + town;
                 fetch(`/api/set_manual?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=0&lon=0`)
                     .then(res => res.json()).then(data => { alert("設定儲存成功！"); refreshStatus(); });
             }
