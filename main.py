@@ -99,10 +99,7 @@ def fetch_weather_job():
         # 這裡繼續你原本的雷達判斷與 AI 趨勢邏輯...
         # 記得：判斷收衣請使用 rain_1hr > 2.0 (累積雨量) 會比 rain_10m 更穩
 
-    except Exception as e:
-        print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
-        current_cached_status = f"CLOSE (Error:氣象站聯動異常 {str(e)})"
-        # ... 接下來繼續執行你後續的預報與雷達邏輯
+
 
         # -----------------------------------------------------------------
         # 2. 抓取預報 (F-C0032-001: 三十六小時天氣預報)
@@ -173,9 +170,7 @@ def fetch_weather_job():
                         else:
                             radar_verdict = "SAFE"
                             
-        except Exception as e:
-            print(f"❌ [雷達分析模組失敗] {e}")
-            radar_verdict = "SAFE" # 故障失效安全處理
+
 
         # ================= 📈 雨勢趨勢 AI (決策邏輯) =================
         # 初始化評分參數
