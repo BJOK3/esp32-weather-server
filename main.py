@@ -1,3 +1,7 @@
+import requests
+from PIL import Image
+from io import BytesIO
+import time
 import datetime
 import os
 from io import BytesIO
@@ -9,6 +13,10 @@ from fastapi.responses import HTMLResponse
 from PIL import Image
 import requests
 import urllib3
+from collections import deque
+event_queue = deque()
+
+last_action = "NONE"
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -33,17 +41,6 @@ SYSTEM_MODE = "AUTO"      # 系統模式："AUTO" (自動) 或 "MANUAL" (手動)
 REMOTE_COMMAND = "STOP"   # 手動模式指令："STOP", "CLOSE", "OPEN"
 
 
-# ================= 🌤️ 氣象偵測核心函式 (修復 NameError) =================
-def fetch_weather_job():
-    """ 這個就是原本噴出 NameError 的函式，確保它被定義在 API 呼叫之前 """
-    global current_cached_status, CURRENT_LOCATION
-    
-    # 如果還沒有設定位置，就不執行
-    if not CURRENT_LOCATION["city"] or not CURRENT_LOCATION["town"]:
-        current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
-        return
-
-# ================= 🌤️ 氣象偵測核心函式 (修復縮排錯誤) =================
 def fetch_weather_job():
     global current_cached_status, CURRENT_LOCATION
     
@@ -129,59 +126,103 @@ def fetch_weather_job():
                     val = first_time_period.get("parameter", {}).get("parameterName", "0")
                     pop = int(val) if val.isdigit() else 0
                     print(f"[CWA 預報] {city_name} 降雨機率: {pop}%")
-        # -----------------------------------------------------------------
-        # 3. 即時降雨雷達圖切片 (雷達回波像素級掃描技術)
-        # -----------------------------------------------------------------
-        radar_api_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0058-001?Authorization={AUTH_KEY}&format=JSON"
-        radar_res = requests.get(radar_api_url, timeout=8, verify=False)
-        
-        if radar_res.status_code == 200:
-            radar_img_url = radar_res.json().get("records", {}).get("RadarImage", [{}])[0].get("ImageUrl", "")
-            if radar_img_url:
-                img_data = requests.get(radar_img_url, timeout=8, verify=False).content
-                img = Image.open(BytesIO(img_data)).convert("RGB")
-                
-                lat_val = CURRENT_LOCATION["lat"]
-                lon_val = CURRENT_LOCATION["lon"]
-                
-                if lat_val > 0 and lon_val > 0:
-                    pixel_x = int((lon_val - 117.5) / (123.5 - 117.5) * 1024)
-                    pixel_y = int((26.5 - lat_val) / (26.5 - 20.0) * 1024)
-                    
-                    danger_pixels = 0
-                    for dx in range(-5, 6):
-                        for dy in range(-5, 6):
-                            tx = pixel_x + dx
-                            ty = pixel_y + dy
-                            if 0 <= tx < 1024 and 0 <= ty < 1024:
-                                r, g, b = img.getpixel((tx, ty))
-                                if r > 35 or g > 35 or b > 35:
-                                    danger_pixels += 1
-                    
-                    if danger_pixels >= 8:
-                        radar_verdict = "DANGER"
-                        print(f"⚠️ [雷達警告] 偵測到周圍有強烈雨雲進逼！(危險點數: {danger_pixels})")
 
         # -----------------------------------------------------------------
-        # 4. 打包數據更新快取
+        # 3. 即時降雨雷達圖：兩階段自動下載與像素掃描 (O-A0058-003)
         # -----------------------------------------------------------------
+        radar_api_url = f"https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-A0058-003?Authorization={AUTH_KEY}&downloadType=WEB&format=JSON"
+        
+        try:
+            radar_res = requests.get(radar_api_url, timeout=12, verify=False)
+            if radar_res.status_code == 200:
+                data = radar_res.json()
+                
+                # 📍 第一階段：精準解析 JSON 結構 (cwaopendata -> dataset -> resource -> ProductURL)
+                img_url = data.get("cwaopendata", {}).get("dataset", {}).get("resource", {}).get("ProductURL")
+                
+                if img_url:
+                    # 📍 第二階段：下載圖片並進行記憶體內分析
+                    img_res = requests.get(img_url, timeout=15, verify=False)
+                    img = Image.open(BytesIO(img_res.content)).convert("RGB")
+                    
+                    lat_val = CURRENT_LOCATION["lat"]
+                    lon_val = CURRENT_LOCATION["lon"]
+                    
+                    if lat_val > 0 and lon_val > 0:
+                        # 📍 座標映射：根據 JSON 中提供的範圍 (Lon: 118-124, Lat: 20.5-26.5) 與圖片解析度 (3600x3600)
+                        # 將經緯度轉換為圖片像素座標
+                        pixel_x = int((lon_val - 118.0) / (124.0 - 118.0) * 3600)
+                        pixel_y = int((26.5 - lat_val) / (26.5 - 20.5) * 3600)
+                        
+                        danger_pixels = 0
+                        # 📍 像素分析：掃描目標點周圍 5x5 像素範圍
+                        for dx in range(-5, 6):
+                            for dy in range(-5, 6):
+                                tx, ty = pixel_x + dx, pixel_y + dy
+                                if 0 <= tx < 3600 and 0 <= ty < 3600:
+                                    r, g, b = img.getpixel((tx, ty))
+                                    # 根據圖例，有色彩的區域代表有降雨回波
+                                    # 如果 R, G, B 分量高於 50，即判定為有降雨訊號
+                                    if r > 50 or g > 50 or b > 50:
+                                        danger_pixels += 1
+                        
+                        # 📍 判定邏輯：超過 8 個像素點顯示降雨，即判定為 DANGER
+                        if danger_pixels >= 8:
+                            radar_verdict = "DANGER"
+                            print(f"⚠️ [雷達自動分析] 偵測到強烈回波 (危險點數: {danger_pixels})")
+                        else:
+                            radar_verdict = "SAFE"
+                            
+        except Exception as e:
+            print(f"❌ [雷達分析模組失敗] {e}")
+            radar_verdict = "SAFE" # 故障失效安全處理
+
+        # ================= 📈 雨勢趨勢 AI (決策邏輯) =================
+        # 初始化評分參數
+        rain_trend_score = 0
+        risk_score = 0
+        
+        # A. 計算雨勢趨勢分
+        if rain_10m > 1.0: rain_trend_score += 3
+        elif rain_10m > 0.3: rain_trend_score += 2
+        elif rain_10m > 0: rain_trend_score += 1
+        
+        if radar_verdict == "DANGER": rain_trend_score += 3
+        
+        if pop >= 80: rain_trend_score += 2
+        elif pop >= 60: rain_trend_score += 1
+
+        # B. 判定趨勢狀態
+        if rain_trend_score >= 6: trend_state = "RISING_FAST"
+        elif rain_trend_score >= 4: trend_state = "RISING"
+        elif rain_trend_score >= 2: trend_state = "STABLE"
+        else: trend_state = "CLEARING"
+
+        # C. 計算風險分數
+        if trend_state == "RISING_FAST": risk_score += 3
+        elif trend_state == "RISING": risk_score += 2
+        elif trend_state == "STABLE": risk_score += 1
+        
+        # D. 最終動作決策 (關鍵整合點)
+        # 只要風險分數達到一定門檻，就觸發收衣 (CLOSE)
+        action_advice = "CLOSE" if risk_score >= 4 else "OPEN"
+        
+        # 4. 打包數據更新快取
         now_str = datetime.datetime.now(TW_TZ).strftime("%H:%M:%S")
-        action_advice = "OPEN"
-        if pop >= 70 or rain_10m > 0.0 or radar_verdict == "DANGER" or humidity > 85 or wind_speed > 8.0:
-            action_advice = "CLOSE"
+        global last_action
+        if action_advice != last_action:
+            event_queue.append(f"{now_str} - 動作變更為: {action_advice} (風險分:{risk_score})")
+            last_action = action_advice
             
         current_cached_status = (
-            f"{action_advice} (Loc:{display_name} 於 {now_str} 更新) | "
-            f"PoP:{pop}% | Rain10m:{rain_10m}mm | "
-            f"Wind:{wind_dir}deg | WSpd:{wind_speed}m/s | "
-            f"Humid:{humidity}% | Radar:{radar_verdict}"
+            f"{action_advice} (Loc:{city_name}{town_name} 於 {now_str} 更新) | "
+            f"PoP:{pop}% | Rain10m:{rain_10m}mm | Radar:{radar_verdict} | Risk:{risk_score}"
         )
-        print(f"📡 [排程大腦成功] 目前最新狀態：{current_cached_status}")
+        print(f"📡 [排程大腦成功] {current_cached_status}")
 
     except Exception as e:
-        # except 必須跟 try 站在同一個縮排水平線上
-        current_cached_status = f"CLOSE (Error:氣象站聯動異常 {str(e)})"
         print(f"❌ [排程大腦失敗] 發生錯誤: {str(e)}")
+        current_cached_status = f"CLOSE (Error:聯動異常 {str(e)})"
 
 
 # ================= ⏰ 自動定時排程 =================
