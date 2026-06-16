@@ -56,9 +56,16 @@ SYSTEM_MODE = "AUTO"      # 系統模式："AUTO" (自動) 或 "MANUAL" (手動)
 REMOTE_COMMAND = "STOP"   # 手動模式指令："STOP", "CLOSE", "OPEN"
 
 def parse_taiwan_address(addr):
-    """ 強制解析台灣地址的通用函式 """
+    # 列印出 Nominatim 實際回傳的內容，讓我們在 Render 的 logs 看到
+    print(f"DEBUG: Nominatim raw address: {addr}")
+    
     city = addr.get("county") or addr.get("city") or addr.get("state") or ""
     town = addr.get("town") or addr.get("city_district") or addr.get("district") or addr.get("suburb") or ""
+    
+    # 針對台灣地址的校正
+    if "臺北市" in city or "台北市" in city: city = "臺北市"
+    if "新北市" in city: city = "新北市"
+    
     return city, town
 
 def get_distance(lat1, lon1, lat2, lon2):
@@ -645,17 +652,30 @@ def set_by_gps(lat: float, lon: float):
         
         city, town = parse_taiwan_address(addr)
         
-        # 關鍵除錯：如果解析不到，強制給予預設值或從選單結構比對
-        if not city:
-            print(f"⚠️ 無法解析地址，原始資料: {addr}")
-            
-        CURRENT_LOCATION.update({"city": city, "town": town, "lat": lat, "lon": lon, "display_name": f"{city}{town}"})
+        # 如果解析出來還是空的，設定預設值避免系統卡死
+        if not city: city = "未知地區"
+        if not town: town = "未知鄉鎮"
+
+        CURRENT_LOCATION.update({
+            "city": city,
+            "town": town,
+            "lat": lat,
+            "lon": lon,
+            "display_name": f"GPS({city}{town})"
+        })
+        
+        # 立即執行一次天氣檢查確保狀態同步
+        fetch_weather_job()
+        
+        return {
+            "status": "SUCCESS", 
+            "city": city, 
+            "town": town, 
+            "lat": lat, 
+            "lon": lon
+        }
     except Exception as e:
-        print(f"❌ GPS 反查失敗: {e}")
-
-    fetch_weather_job()
-    return {"status": "SUCCESS", "lat": CURRENT_LOCATION["lat"], "lon": CURRENT_LOCATION["lon"], "city": CURRENT_LOCATION["city"], "town": CURRENT_LOCATION["town"]}
-
+        return {"status": "ERROR", "message": str(e)}
 
 # ================= 🌐 後端 API：手動選單儲存 =================
 @app.get("/api/set_manual")
