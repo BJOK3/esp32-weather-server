@@ -50,6 +50,8 @@ CURRENT_LOCATION = {
     "lat": 0.0,             
 }
 
+nominatim_cache = {}
+
 current_cached_status = "CLOSE 請先開啟控制台網頁，透過 GPS 定位或手動選擇地區以開始監測。"
 
 # 📱 全新修改：移除了實體按鈕，改由雲端全權紀錄狀態
@@ -96,6 +98,7 @@ def reverse_geocode(lat, lon):
         return {"city": "", "town": ""}
 
 def parse_taiwan_address(addr):
+    # 列印出 Nominatim 實際回傳的內容，讓我們在 Render 的 logs 看到
     print(f"DEBUG: Nominatim raw address: {addr}")
     
     city = (
@@ -115,12 +118,18 @@ def parse_taiwan_address(addr):
     )
     
     # 台灣縣市名稱校正
-    city = city.replace("臺北市", "臺北市").replace("台北市", "臺北市")
-    if "新北" in city: city = "新北市"
-    if "桃園" in city: city = "桃園市"
-    if "臺中" in city or "台中" in city: city = "臺中市"
-    if "臺南" in city or "台南" in city: city = "臺南市"
-    if "高雄" in city: city = "高雄市"
+    if "臺北" in city or "台北" in city:
+        city = "臺北市"
+    if "新北" in city:
+        city = "新北市"
+    if "桃園" in city:
+        city = "桃園市"
+    if "臺中" in city or "台中" in city:
+        city = "臺中市"
+    if "臺南" in city or "台南" in city:
+        city = "臺南市"
+    if "高雄" in city:
+        city = "高雄市"
     
     return city.strip(), town.strip()
 
@@ -697,37 +706,46 @@ def get_hanger_status():
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
     
-    city = town = name = ""
-    try:
-        headers = {"User-Agent": "SmartHangerApp/4.0"}
-        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
-        
-        res = requests.get(url, headers=headers, timeout=8)
-        res.raise_for_status()
-        data = res.json()
-        
-        addr = data.get("address", {})
-        city, town = parse_taiwan_address(addr)
-        
-        if not city and not town:
-            # 最後保底：用 display_name 簡單拆
-            display = data.get("display_name", "")
-            if "縣" in display or "市" in display:
-                parts = display.split(",")
-                for p in parts:
-                    p = p.strip()
-                    if ("縣" in p or "市" in p) and len(p) > 2:
-                        city = p
-                        break
-        
-        name = f"座標定位({city or '未知'}{town or ''})"
-        print(f"✅ GPS 解析成功 → City: {city}, Town: {town}")
-        
-    except Exception as e:
-        print(f"❌ Nominatim 失敗: {e}")
+    # 避免過度請求，先四捨五入到小數點第4位
+    lat_rounded = round(lat, 4)
+    lon_rounded = round(lon, 4)
+    cache_key = f"{lat_rounded},{lon_rounded}"
     
+    city = ""
+    town = ""
+    name = f"座標定位({lat_rounded},{lon_rounded})"
+
+    # === 快取檢查 ===
+    if cache_key in nominatim_cache:
+        city, town = nominatim_cache[cache_key]
+        print(f"✅ 使用快取: {city}{town}")
+    else:
+        try:
+            import time
+            time.sleep(1.2)  # 強制延遲，避免 429
+            
+            headers = {"User-Agent": "SmartHangerApp/4.0"}
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat_rounded}&lon={lon_rounded}&format=json&accept-language=zh-TW"
+            
+            res = requests.get(url, headers=headers, timeout=10)
+            
+            if res.status_code == 429:
+                print("⚠️ Nominatim rate limit (429)，使用座標作為後備名稱")
+            else:
+                res.raise_for_status()
+                data = res.json()
+                addr = data.get("address", {})
+                city, town = parse_taiwan_address(addr)
+                nominatim_cache[cache_key] = (city, town)  # 存入快取
+                
+            print(f"✅ DEBUG: 解析結果 City={city}, Town={town}")
+            
+        except Exception as e:
+            print(f"❌ Nominatim 地理編碼失敗: {e}")
+
+    # 更新位置
     CURRENT_LOCATION.update({
-        "display_name": name,
+        "display_name": name if not city else f"座標定位({city}{town})",
         "city": city,
         "town": town,
         "lat": lat,
@@ -741,18 +759,35 @@ def set_by_gps(lat: float, lon: float):
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
     
-    # 情況 A：使用者只給了經緯度，沒有選縣市 -> 執行「反向地理編碼 (Reverse Geocoding)」
+    # 情況 A：只有經緯度，沒有縣市 → 執行反向地理編碼
     if (not city or not town) and (lat != 0.0 and lon != 0.0):
+        lat_rounded = round(lat, 4)
+        lon_rounded = round(lon, 4)
+        cache_key = f"{lat_rounded},{lon_rounded}"
+        
         try:
-            headers = {"User-Agent": "SmartHangerApp/4.0"}
-            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
-            res = requests.get(url, headers=headers, timeout=8)
-            res.raise_for_status()
-            data = res.json()
-            
-            addr = data.get("address", {})
-            city, town = parse_taiwan_address(addr)   # ← 改用這個函式！
-            
+            # 使用快取
+            if cache_key in nominatim_cache:
+                city, town = nominatim_cache[cache_key]
+                print(f"✅ [set_manual] 使用快取: {city}{town}")
+            else:
+                import time
+                time.sleep(1.2)  # 避免 429
+                
+                headers = {"User-Agent": "SmartHangerApp/4.0"}
+                url = f"https://nominatim.openstreetmap.org/reverse?lat={lat_rounded}&lon={lon_rounded}&format=json&accept-language=zh-TW"
+                
+                res = requests.get(url, headers=headers, timeout=10)
+                
+                if res.status_code == 429:
+                    print("⚠️ Nominatim rate limit (429)")
+                else:
+                    res.raise_for_status()
+                    data = res.json()
+                    addr = data.get("address", {})
+                    city, town = parse_taiwan_address(addr)
+                    nominatim_cache[cache_key] = (city, town)
+                
             name = f"座標定位({city}{town})"
             print(f"DEBUG [set_manual]: City={city}, Town={town}")
             
@@ -760,6 +795,17 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
             print(f"❌ set_manual 反向地理編碼失敗: {e}")
             pass 
 
+    # 更新位置資訊
+    CURRENT_LOCATION.update({
+        "display_name": name or f"座標定位({lat},{lon})",
+        "city": city,
+        "town": town,
+        "lat": lat,
+        "lon": lon
+    })
+
+    fetch_weather_job()
+    return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
 @app.get("/api/event")
 def get_event():
