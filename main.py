@@ -637,53 +637,56 @@ def get_hanger_status():
 
 
 
+# 建議定義一個輔助函數，避免兩個 API 重複寫解析邏輯
+def parse_address(addr):
+    # 增加更多欄位映射：county(縣/市), city(市), state(省/州)
+    city = addr.get("county") or addr.get("city") or addr.get("state") or ""
+    # 增加更多欄位映射：town(鎮/市), city_district(區), suburb(村里), village(村), hamlet(聚落)
+    town = addr.get("town") or addr.get("city_district") or addr.get("district") or addr.get("suburb") or addr.get("village") or addr.get("hamlet") or ""
+    return city, town
+
 @app.get("/api/set_manual")
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
     
-    # 情況 A：經緯度轉地址 (Reverse Geocoding)
     if (not city or not town) and (lat != 0.0 and lon != 0.0):
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
+            # 加入 accept-language=zh-TW
             url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
             res = requests.get(url, headers=headers, timeout=5).json()
             addr = res.get("address", {})
-            
-            # --- 核心修正：加入更多可能的欄位名稱 ---
-            # 優先抓縣市：county -> city -> state
-            city = addr.get("county") or addr.get("city") or addr.get("state") or city
-            # 優先抓鄉鎮：town -> city_district -> suburb -> village -> hamlet
-            town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or addr.get("hamlet") or town
-            
+            city, town = parse_address(addr)
             name = f"座標定位({city}{town})"
         except Exception as e:
-            print(f"DEBUG: Reverse Geocoding Error: {e}")
+            print(f"❌ Reverse Geocoding Error: {e}")
 
-    # 情況 B：地址轉經緯度 (Geocoding)
     elif (city and town) and (lat == 0.0 or lon == 0.0):
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
             query = f"{city}{town}"
-            url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1"
+            url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1&accept-language=zh-TW"
             res = requests.get(url, headers=headers, timeout=5).json()
             if res:
-                lat = float(res[0]["lat"])
-                lon = float(res[0]["lon"])
+                lat, lon = float(res[0]["lat"]), float(res[0]["lon"])
         except Exception as e:
-            print(f"DEBUG: Geocoding Error: {e}")
+            print(f"❌ Geocoding Error: {e}")
 
-    # 更新全域變數 (增加保護：若還是空的，給預設值)
+    # 【保護措施】如果解析後還是空的，給予預設值，確保程式不會因為沒地名而停止
+    final_city = city if city else "未設定縣市"
+    final_town = town if town else "未設定鄉鎮"
+
     CURRENT_LOCATION.update({
-        "display_name": name or "未命名位置",
-        "city": city or "未知縣市",
-        "town": town or "未知鄉鎮",
+        "display_name": name if name else f"{final_city}{final_town}",
+        "city": final_city,
+        "town": final_town,
         "lat": lat,
         "lon": lon
     })
-
-    print(f"DEBUG: 更新後的 CURRENT_LOCATION: {CURRENT_LOCATION}")
+    
+    print(f"DEBUG: 更新後的區域為 {final_city}{final_town}")
     fetch_weather_job()
-    return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
+    return {"status": "SUCCESS", "city": final_city, "town": final_town, "lat": lat, "lon": lon}
 
 
 @app.get("/api/set_by_gps")
