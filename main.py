@@ -42,14 +42,14 @@ TW_TZ = ZoneInfo("Asia/Taipei")
 
 # ================= 🗺️ 修改全域變數預設值 =================
 CURRENT_LOCATION = {
-    "display_name": "南投縣埔里鎮",  
-    "city": "南投縣",         
-    "town": "埔里鎮",         
-    "lon": 120.96,            # 埔里經度
-    "lat": 23.97,             # 埔里緯度
+    "display_name": "尚未設定位置",  
+    "city": "",         
+    "town": "",         
+    "lon": 0.0,            
+    "lat": 0.0,             
 }
 
-current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
+current_cached_status = "CLOSE 請先開啟控制台網頁，透過 GPS 定位或手動選擇地區以開始監測。"
 
 # 📱 全新修改：移除了實體按鈕，改由雲端全權紀錄狀態
 SYSTEM_MODE = "AUTO"      # 系統模式："AUTO" (自動) 或 "MANUAL" (手動)
@@ -86,6 +86,11 @@ def find_nearest_station(stations, target_lat, target_lon):
 
 def fetch_weather_job():
     global current_cached_status, CURRENT_LOCATION, last_action, REMOTE_COMMAND
+    
+    # 檢查是否已設定有效位置 (緯度不為 0)
+    if CURRENT_LOCATION["lat"] == 0.0 or CURRENT_LOCATION["lon"] == 0.0:
+        current_cached_status = "等待設定 (請點擊網頁進行定位)"
+        return
 
     if not CURRENT_LOCATION["city"] or not CURRENT_LOCATION["town"]:
         current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
@@ -536,10 +541,16 @@ def get_home_page():
     </body>
     </html>
     """
+    # 邏輯判斷：如果經緯度是 0.0，則顯示為空字串，避免輸入框出現 0.0
     latlon_str = f"{CURRENT_LOCATION['lat']},{CURRENT_LOCATION['lon']}" if CURRENT_LOCATION['lat'] != 0.0 else ""
+    
+    # 取出顯示名稱 (若沒設定則為空)
     display_name = CURRENT_LOCATION["display_name"] or ""
+    
+    # 進行字串替換
     final_html = html_template.replace("__DISPLAY_NAME__", display_name)
     final_html = final_html.replace("__LAT_LON_VALUE__", latlon_str)
+    
     return HTMLResponse(content=final_html, status_code=200)
 
 
