@@ -526,7 +526,7 @@ def get_home_page():
                                     alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
                                     // 原本可能有的：updateDropdown(data.city, data.town); 
                                     // -> 直接註解掉或刪除這行，避免它去嘗試匹配不存在的選項
-                                    refreshStatus(); = "已鎖定座標模式";
+                                    refreshStatus();
                                 }
                             })
                             .catch(err => alert("伺服器連線失敗"));
@@ -637,41 +637,7 @@ def get_hanger_status():
     return f"MODE:{SYSTEM_MODE} | CMD:{REMOTE_COMMAND} | {current_cached_status}"
 
 
-# ================= 🌐 後端 API：手機 GPS 定位 =================
 
-window.getPhoneGPS = function() {
-    if (!navigator.geolocation) {
-        alert("您的瀏覽器不支援定位功能。");
-        return;
-    }
-
-    document.getElementById("statusBox").innerText = "⏳ 正在取得 GPS 定位...";
-    
-    navigator.geolocation.getCurrentPosition(
-        function(position) {
-            var lat = position.coords.latitude.toFixed(6);
-            var lon = position.coords.longitude.toFixed(6);
-            
-            document.getElementById("statusBox").innerText = "⏳ 定位成功，正在回傳後端...";
-            
-            fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
-                .then(res => res.json())
-                .then(data => {
-                    if (data.status === "SUCCESS") {
-                        alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
-                        refreshStatus();
-                    }
-                })
-                .catch(err => alert("伺服器連線失敗"));
-        },
-        function(error) {
-            alert("定位失敗，請確保已開啟 GPS 權限。");
-        },
-        { enableHighAccuracy: true, timeout: 10000 }
-    );
-}
-
-# ================= 🌐 後端 API：手動選單儲存 =================
 @app.get("/api/set_manual")
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
