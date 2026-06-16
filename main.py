@@ -42,14 +42,14 @@ TW_TZ = ZoneInfo("Asia/Taipei")
 
 # ================= 🗺️ 修改全域變數預設值 =================
 CURRENT_LOCATION = {
-    "display_name": "南投縣埔里鎮",  
-    "city": "南投縣",         
-    "town": "埔里鎮",         
-    "lon": 120.96,            # 埔里經度
-    "lat": 23.97,             # 埔里緯度
+    "display_name": "尚未設定位置",  
+    "city": "",         
+    "town": "",         
+    "lon": 0.0,            
+    "lat": 0.0,             
 }
 
-current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
+current_cached_status = "CLOSE 請先開啟控制台網頁，透過 GPS 定位或手動選擇地區以開始監測。"
 
 # 📱 全新修改：移除了實體按鈕，改由雲端全權紀錄狀態
 SYSTEM_MODE = "AUTO"      # 系統模式："AUTO" (自動) 或 "MANUAL" (手動)
@@ -86,6 +86,11 @@ def find_nearest_station(stations, target_lat, target_lon):
 
 def fetch_weather_job():
     global current_cached_status, CURRENT_LOCATION, last_action, REMOTE_COMMAND
+    
+    # 檢查是否已設定有效位置 (緯度不為 0)
+    if CURRENT_LOCATION["lat"] == 0.0 or CURRENT_LOCATION["lon"] == 0.0:
+        current_cached_status = "等待設定 (請點擊網頁進行定位)"
+        return
 
     if not CURRENT_LOCATION["city"] or not CURRENT_LOCATION["town"]:
         current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
@@ -452,28 +457,48 @@ def get_home_page():
 
             // 修改後的 getPhoneGPS 函式
             function getPhoneGPS() {
-                if (navigator.geolocation) {
-                    document.getElementById("statusBox").innerText = "⏳ 正在向手機索取 GPS 座標...";
-                    navigator.geolocation.getCurrentPosition(function(position) {
+                if (!navigator.geolocation) {
+                    alert("您的瀏覽器不支援定位功能。");
+                    return;
+                }
+
+                document.getElementById("statusBox").innerText = "⏳ 正在取得 GPS 定位...";
+                
+                // 設定超時時間，避免卡死
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
                         var lat = position.coords.latitude.toFixed(6);
                         var lon = position.coords.longitude.toFixed(6);
                         
+                        document.getElementById("statusBox").innerText = "⏳ 定位成功，正在轉換為地址...";
+                        
                         fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
-                            .then(res => res.json()).then(data => {
-                                alert(`🎉 手機定位同步成功！\n鎖定區域：${data.city}${data.town}`);
-                                refreshStatus();
-                                
-                                // 【修正】將正確的經緯度回填到輸入框
-                                document.getElementById("latlonInput").value = `${data.lat},${data.lon}`;
-                                
-                                // 若需要設定縣市選單
-                                document.getElementById("citySelect").value = data.city;
-                                updateTownDropdown(data.town);
-                            });
-                    });
-                } else {
-                    alert("您的瀏覽器不支援定位功能。");
-                }
+                            .then(res => res.json())
+                            .then(data => {
+                                if (data.status === "SUCCESS") {
+                                    alert(`🎉 定位成功！\n鎖定區域：${data.city}${data.town}`);
+                                    document.getElementById("latlonInput").value = `${data.lat},${data.lon}`;
+                                    document.getElementById("citySelect").value = data.city;
+                                    updateTownDropdown(data.town);
+                                    refreshStatus();
+                                } else {
+                                    alert("定位成功，但地址解析失敗，請手動選擇。");
+                                }
+                            })
+                            .catch(err => alert("伺服器連線失敗"));
+                    },
+                    function(error) {
+                        var msg = "";
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED: msg = "請在手機設定中允許瀏覽器存取位置權限。"; break;
+                            case error.POSITION_UNAVAILABLE: msg = "無法取得位置資訊。"; break;
+                            case error.TIMEOUT: msg = "定位請求超時，請稍後再試。"; break;
+                        }
+                        alert("定位失敗：" + msg);
+                        document.getElementById("statusBox").innerText = "❌ 定位失敗";
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
             }
 
             // 更新：單純發送指令的函式
@@ -494,8 +519,8 @@ def get_home_page():
                 var town = document.getElementById("townSelect").value;
                 var latlonInput = document.getElementById("latlonInput").value.trim();
                 
-                if (!city || !town) { 
-                    alert("請選擇縣市與鄉鎮！"); 
+                if ((!city || !town) && !latlonInput) { 
+                    alert("請選擇縣市鄉鎮，或直接輸入經緯度座標！"); 
                     return; 
                 }
 
@@ -504,6 +529,7 @@ def get_home_page():
                 btn.disabled = true;
 
                 var lat = 0, lon = 0;
+                var displayName = (city && town) ? (city + town) : "自訂座標";
                 if (latlonInput) {
                     var parts = latlonInput.split(",");
                     if (parts.length === 2) {
@@ -513,7 +539,7 @@ def get_home_page():
                 }
                 
                 // 2. 發送儲存請求
-                fetch(`/api/set_manual?name=${encodeURIComponent(city + town)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
+                fetch(`/api/set_manual?name=${encodeURIComponent(displayName)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
                     .then(res => res.json())
                     .then(data => { 
                         // 3. 儲存成功後，觸發後端同步 (force_refresh)
@@ -536,10 +562,16 @@ def get_home_page():
     </body>
     </html>
     """
+    # 邏輯判斷：如果經緯度是 0.0，則顯示為空字串，避免輸入框出現 0.0
     latlon_str = f"{CURRENT_LOCATION['lat']},{CURRENT_LOCATION['lon']}" if CURRENT_LOCATION['lat'] != 0.0 else ""
+    
+    # 取出顯示名稱 (若沒設定則為空)
     display_name = CURRENT_LOCATION["display_name"] or ""
+    
+    # 進行字串替換
     final_html = html_template.replace("__DISPLAY_NAME__", display_name)
     final_html = final_html.replace("__LAT_LON_VALUE__", latlon_str)
+    
     return HTMLResponse(content=final_html, status_code=200)
 
 
@@ -596,8 +628,8 @@ def set_by_gps(lat: float, lon: float):
     
     return {
         "status": "SUCCESS", 
-        "lon": CURRENT_LOCATION["lat"], 
-        "lat": CURRENT_LOCATION["lon"],
+        "lat": CURRENT_LOCATION["lat"], 
+        "lon": CURRENT_LOCATION["lon"],
         "name": CURRENT_LOCATION["display_name"],
         "city": CURRENT_LOCATION["city"],
         "town": CURRENT_LOCATION["town"]
@@ -609,28 +641,43 @@ def set_by_gps(lat: float, lon: float):
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
     
-    CURRENT_LOCATION["display_name"] = name
-    CURRENT_LOCATION["city"] = city
-    CURRENT_LOCATION["town"] = town
+    # 情況 A：使用者只給了經緯度，沒有選縣市 -> 執行「反向地理編碼 (Reverse Geocoding)」
+    if (not city or not town) and (lat != 0.0 and lon != 0.0):
+        try:
+            headers = {"User-Agent": "SmartHangerApp/4.0"}
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
+            res = requests.get(url, headers=headers, timeout=5).json()
+            addr = res.get("address", {})
+            city = addr.get("county", "") or addr.get("city", "")
+            town = addr.get("town", "") or addr.get("city_district", "") or addr.get("suburb", "")
+            name = f"座標定位({city}{town})"
+        except:
+            pass 
 
-    # 判斷是否有有效經緯度
-    if lat != 0.0 and lon != 0.0:
-        CURRENT_LOCATION["lat"] = lat
-        CURRENT_LOCATION["lon"] = lon
-    else:
-        # 若沒有經緯度，才呼叫 Nominatim 搜尋經緯度
+    # 情況 B：使用者選了縣市，但沒給座標 -> 執行「正向地理編碼 (Geocoding)」
+    elif (city and town) and (lat == 0.0 or lon == 0.0):
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
             query = f"{city}{town}"
-            res = requests.get(f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1", headers=headers, timeout=4).json()
+            url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1"
+            res = requests.get(url, headers=headers, timeout=5).json()
             if res:
-                CURRENT_LOCATION["lon"] = float(res[0]["lon"])
-                CURRENT_LOCATION["lat"] = float(res[0]["lat"])
+                lat = float(res[0]["lat"])
+                lon = float(res[0]["lon"])
         except:
             pass
 
+    # 更新全域變數
+    CURRENT_LOCATION.update({
+        "display_name": name,
+        "city": city,
+        "town": town,
+        "lat": lat,
+        "lon": lon
+    })
+
     fetch_weather_job()
-    return {"status": "SUCCESS", "message": "設定已儲存並同步"}
+    return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
 
 @app.get("/api/event")
