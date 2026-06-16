@@ -699,35 +699,32 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
 @app.get("/api/set_by_gps")
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
-
+    
     city = ""
     town = ""
     name = f"座標定位({lat},{lon})"
 
     try:
+        # 增加 User-Agent 是必要的，否則 Nominatim 會拒絕連線
         headers = {"User-Agent": "SmartHangerApp/4.0"}
-        # 加入 accept-language=zh-TW 強制請求中文地址格式
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
-        res = requests.get(url, headers=headers, timeout=5)
-        data = res.json()
         
-        # 【重要】印出原始資料供除錯
-        print(f"DEBUG: Nominatim API 回傳資料: {data}")
+        res = requests.get(url, headers=headers, timeout=5)
+        res.raise_for_status() # 如果連線失敗會拋出錯誤
+        data = res.json()
         
         addr = data.get("address", {})
         
-        # 擴充解析規則：嘗試更多可能的欄位組合
+        # 擴大搜尋範圍，避免因為鍵值名稱對不上導致抓不到
+        # 台灣地址常見鍵值：county, city, town, city_district, suburb, village
         city = addr.get("county") or addr.get("city") or addr.get("state") or ""
-        town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or addr.get("district") or ""
+        town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or ""
         
-        # 如果解析出來還是空的，定義預設名稱
-        if city or town:
-            name = f"座標定位({city}{town})"
-        else:
-            name = f"座標定位({lat},{lon})"
-            
+        name = f"座標定位({city}{town})"
+        print(f"DEBUG: 解析結果 City={city}, Town={town}") # 觀察 console 看是否抓到了值
+        
     except Exception as e:
-        print(f"ERROR: 地理編碼失敗: {e}")
+        print(f"ERROR: 地理編碼失敗: {e}") # 在 logs 中查看具體錯誤原因
         pass
 
     CURRENT_LOCATION.update({
@@ -738,7 +735,6 @@ def set_by_gps(lat: float, lon: float):
         "lon": lon
     })
 
-    # 執行天氣任務
     fetch_weather_job()
     return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
