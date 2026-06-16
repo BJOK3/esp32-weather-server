@@ -493,15 +493,15 @@ def get_home_page():
                 var town = document.getElementById("townSelect").value;
                 var latlonInput = document.getElementById("latlonInput").value.trim();
                 
-                // 檢查縣市是否已選
                 if (!city || !town) { 
                     alert("請選擇縣市與鄉鎮！"); 
                     return; 
                 }
                 
-                // 如果有經緯度，直接發送；如果沒有，後端會自動根據地名查詢
                 var lat = 0, lon = 0;
-                if (latlonInput) {
+                var hasLatLon = (latlonInput !== ""); // 是否有輸入座標
+                
+                if (hasLatLon) {
                     var parts = latlonInput.split(",");
                     if (parts.length === 2) {
                         lat = parseFloat(parts[0].trim());
@@ -509,13 +509,17 @@ def get_home_page():
                     }
                 }
                 
-                // 儲存設定
                 fetch(`/api/set_manual?name=${encodeURIComponent(city + town)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
                     .then(res => res.json())
                     .then(data => { 
-                        alert("設定已更新，系統將於下次排程自動同步。"); 
+                        // 如果沒填經緯度，才給予反查提示
+                        if (!hasLatLon) alert("已設定區域，系統正在反查經緯度...");
+                        
+                        // 無論如何，執行強制更新並刷新狀態
+                        fetch('/api/force_refresh');
                         refreshStatus(); 
-                    });
+                    })
+                    .catch(err => alert("儲存失敗，請檢查網路。"));
             }
         </script>
     </body>
