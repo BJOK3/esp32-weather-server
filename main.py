@@ -170,9 +170,11 @@ def fetch_weather_job():
         current_cached_status = "等待設定 (請點擊網頁進行定位)"
         return
 
+    # city/town 若因 Nominatim 查無資料而為空，不再直接卡死，
+    # 改用埔里鎮作為保底地名，確保仍能用經緯度查最近氣象站並持續監測。
     if not CURRENT_LOCATION["city"] or not CURRENT_LOCATION["town"]:
-        current_cached_status = "CLOSE (Loc:未設定位置，請先開啟控制台網頁設定區域)"
-        return
+        CURRENT_LOCATION["city"] = CURRENT_LOCATION["city"] or "南投縣"
+        CURRENT_LOCATION["town"] = CURRENT_LOCATION["town"] or "埔里鎮"
 
     def safe_float(val, default=0.0):
         try:
@@ -736,16 +738,24 @@ def set_by_gps(lat: float, lon: float):
                 data = res.json()
                 addr = data.get("address", {})
                 city, town = parse_taiwan_address(addr)
-                nominatim_cache[cache_key] = (city, town)  # 存入快取
+                if city and town:
+                    nominatim_cache[cache_key] = (city, town)  # 只快取完整結果
                 
             print(f"✅ DEBUG: 解析結果 City={city}, Town={town}")
             
         except Exception as e:
             print(f"❌ Nominatim 地理編碼失敗: {e}")
 
+    # 保底地名：Nominatim 查無資料(山區、海上等)時，不留空字串，
+    # 避免 fetch_weather_job() 卡在「未設定位置」。仍保留原始經緯度供雷達/最近氣象站使用。
+    if not city:
+        city = "南投縣"
+    if not town:
+        town = "埔里鎮"
+
     # 更新位置
     CURRENT_LOCATION.update({
-        "display_name": name if not city else f"座標定位({city}{town})",
+        "display_name": f"座標定位({city}{town})",
         "city": city,
         "town": town,
         "lat": lat,
@@ -786,7 +796,8 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
                     data = res.json()
                     addr = data.get("address", {})
                     city, town = parse_taiwan_address(addr)
-                    nominatim_cache[cache_key] = (city, town)
+                    if city and town:
+                        nominatim_cache[cache_key] = (city, town)
                 
             name = f"座標定位({city}{town})"
             print(f"DEBUG [set_manual]: City={city}, Town={town}")
@@ -795,9 +806,34 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
             print(f"❌ set_manual 反向地理編碼失敗: {e}")
             pass 
 
+    # 情況 B：選了縣市鄉鎮，但沒給座標 → 執行正向地理編碼，查出該地點座標
+    elif (city and town) and (lat == 0.0 or lon == 0.0):
+        try:
+            headers = {"User-Agent": "SmartHangerApp/4.0"}
+            query = f"{city}{town}"
+            url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1"
+            res = requests.get(url, headers=headers, timeout=5).json()
+            if res:
+                lat = float(res[0]["lat"])
+                lon = float(res[0]["lon"])
+            else:
+                # 查無結果時，給埔里鎮座標保底，避免 lat/lon 維持 0
+                lat, lon = 23.97, 120.96
+        except Exception as e:
+            print(f"❌ set_manual 正向地理編碼失敗: {e}")
+            lat, lon = 23.97, 120.96
+
+    # 保底地名/座標：確保任何情況下都不會留下空字串或 0 座標，避免 fetch_weather_job() 卡死
+    if not city:
+        city = "南投縣"
+    if not town:
+        town = "埔里鎮"
+    if lat == 0.0 or lon == 0.0:
+        lat, lon = 23.97, 120.96
+
     # 更新位置資訊
     CURRENT_LOCATION.update({
-        "display_name": name or f"座標定位({lat},{lon})",
+        "display_name": name or f"{city}{town}",
         "city": city,
         "town": town,
         "lat": lat,
