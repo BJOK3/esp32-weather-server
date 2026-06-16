@@ -457,28 +457,48 @@ def get_home_page():
 
             // 修改後的 getPhoneGPS 函式
             function getPhoneGPS() {
-                if (navigator.geolocation) {
-                    document.getElementById("statusBox").innerText = "⏳ 正在向手機索取 GPS 座標...";
-                    navigator.geolocation.getCurrentPosition(function(position) {
+                if (!navigator.geolocation) {
+                    alert("您的瀏覽器不支援定位功能。");
+                    return;
+                }
+
+                document.getElementById("statusBox").innerText = "⏳ 正在取得 GPS 定位...";
+                
+                // 設定超時時間，避免卡死
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
                         var lat = position.coords.latitude.toFixed(6);
                         var lon = position.coords.longitude.toFixed(6);
                         
+                        document.getElementById("statusBox").innerText = "⏳ 定位成功，正在轉換為地址...";
+                        
                         fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
-                            .then(res => res.json()).then(data => {
-                                alert(`🎉 手機定位同步成功！\n鎖定區域：${data.city}${data.town}`);
-                                refreshStatus();
-                                
-                                // 【修正】將正確的經緯度回填到輸入框
-                                document.getElementById("latlonInput").value = `${data.lat},${data.lon}`;
-                                
-                                // 若需要設定縣市選單
-                                document.getElementById("citySelect").value = data.city;
-                                updateTownDropdown(data.town);
-                            });
-                    });
-                } else {
-                    alert("您的瀏覽器不支援定位功能。");
-                }
+                            .then(res => res.json())
+                            .then(data => {
+                                if (data.status === "SUCCESS") {
+                                    alert(`🎉 定位成功！\n鎖定區域：${data.city}${data.town}`);
+                                    document.getElementById("latlonInput").value = `${data.lat},${data.lon}`;
+                                    document.getElementById("citySelect").value = data.city;
+                                    updateTownDropdown(data.town);
+                                    refreshStatus();
+                                } else {
+                                    alert("定位成功，但地址解析失敗，請手動選擇。");
+                                }
+                            })
+                            .catch(err => alert("伺服器連線失敗"));
+                    },
+                    function(error) {
+                        var msg = "";
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED: msg = "請在手機設定中允許瀏覽器存取位置權限。"; break;
+                            case error.POSITION_UNAVAILABLE: msg = "無法取得位置資訊。"; break;
+                            case error.TIMEOUT: msg = "定位請求超時，請稍後再試。"; break;
+                        }
+                        alert("定位失敗：" + msg);
+                        document.getElementById("statusBox").innerText = "❌ 定位失敗";
+                    },
+                    { enableHighAccuracy: true, timeout: 10000 }
+                );
             }
 
             // 更新：單純發送指令的函式
@@ -607,8 +627,8 @@ def set_by_gps(lat: float, lon: float):
     
     return {
         "status": "SUCCESS", 
-        "lon": CURRENT_LOCATION["lat"], 
-        "lat": CURRENT_LOCATION["lon"],
+        "lat": CURRENT_LOCATION["lat"], 
+        "lon": CURRENT_LOCATION["lon"],
         "name": CURRENT_LOCATION["display_name"],
         "city": CURRENT_LOCATION["city"],
         "town": CURRENT_LOCATION["town"]
