@@ -59,7 +59,9 @@ def fetch_weather_job():
     town_name = CURRENT_LOCATION["town"]
     pop, rain_10m, rain_1hr = 0, 0.0, 0.0
     wind_speed, wind_dir, humidity = 0.0, 0.0, 50
-    radar_verdict = "SAFE"
+    risk_score = 0
+    action_advice = "SAFE"
+
 
     try:
         # 1. 抓取雨量 (O-A0002-001)
@@ -180,6 +182,8 @@ def fetch_weather_job():
             risk_score += 4 # 極高風險
         elif radar_score >= 4:
             risk_score += 2 # 中等風險
+            
+            
         if pop >= 80:
             rain_trend_score += 2
         elif pop >= 60:
@@ -207,8 +211,7 @@ def fetch_weather_job():
             risk_score += 1
 
         # 額外加分項
-        if radar_verdict == "DANGER":
-            risk_score += 1
+
         if rain_10m > 0.3 or rain_1hr > 1.0:
             risk_score += 1
         if pop >= 80:
@@ -230,7 +233,7 @@ def fetch_weather_job():
         current_cached_status = (
             f"(Loc:{city_name}{town_name} 於 {now_str} 更新) | "
             f"PoP:{pop}% | Rain10m:{rain_10m}mm | Rain1hr:{rain_1hr}mm | "
-            f"Radar:{radar_verdict} | Wind:{wind_dir}deg | WSpd:{wind_speed}m/s | "
+            f"Radar:{radar_score}/10 | Wind:{wind_dir}deg | WSpd:{wind_speed}m/s | "
             f"Humid:{humidity}% | Risk:{risk_score}"
         )
         print(f"📡 [排程成功] {current_cached_status}")
