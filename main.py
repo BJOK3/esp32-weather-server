@@ -57,26 +57,27 @@ SYSTEM_MODE = "AUTO"      # 系統模式："AUTO" (自動) 或 "MANUAL" (手動)
 REMOTE_COMMAND = "STOP"   # 手動模式指令："STOP", "CLOSE", "OPEN"
 
 def get_address_info(lat, lon):
-    """共用的地址解析函式，針對 Nominatim 回傳結構優化"""
+    """標準化地址解析，解決 city/town 為空的問題"""
     try:
         headers = {"User-Agent": "SmartHangerApp/4.0"}
-        # 加上 accept-language=zh-TW 確保回傳中文地址
+        # 加入 accept-language=zh-TW 取得中文地址
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
         res = requests.get(url, headers=headers, timeout=5).json()
         
         addr = res.get("address", {})
         
-        # 精確提取：根據你提供的 API 回傳結構
-        # 優先級：county > city，town > city_district
+        # 根據你提供的 JSON 結構進行精確提取
+        # 縣市：優先從 county 抓
         city = addr.get("county") or addr.get("city") or ""
+        # 鄉鎮：優先從 town 抓，避免抓到「里/鄰」層級的 city_district
         town = addr.get("town") or addr.get("city_district") or ""
         
-        # 地名標準化 (避免氣象局 API 比對不到)
+        # 名稱對齊：確保符合氣象局格式 (將「台」轉換為「臺」)
         city = city.replace("台北市", "臺北市").replace("台中市", "臺中市").replace("台南市", "臺南市").replace("台東縣", "臺東縣")
         
         return city, town
     except Exception as e:
-        print(f"DEBUG: 地理編碼錯誤: {e}")
+        print(f"DEBUG: 解析地址失敗: {e}")
         return "", ""
     
 def reverse_geocode(lat, lon):
@@ -676,14 +677,13 @@ def get_hanger_status():
 
 
 
-@app.get("/api/set_manual")
-def set_manual(name: str, city: str, town: str, lat: float, lon: float):
+@app.get("/api/set_by_gps")
+def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
+    city, town = get_address_info(lat, lon)
     
-    # 若手動填寫時沒給地址，嘗試透過經緯度補全
-    if (not city or not town) and (lat != 0 and lon != 0):
-        city, town = get_address_info(lat, lon)
-        name = f"座標定位({city}{town})"
+    # 若 city 有值才顯示名稱，否則顯示座標
+    name = f"座標定位({city}{town})" if city else f"座標定位({lat},{lon})"
     
     CURRENT_LOCATION.update({
         "display_name": name,
@@ -696,13 +696,15 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     fetch_weather_job()
     return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
-
-@app.get("/api/set_by_gps")
-def set_by_gps(lat: float, lon: float):
+@app.get("/api/set_manual")
+def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
-    city, town = get_address_info(lat, lon)
     
-    name = f"座標定位({city}{town})" if city else f"座標定位({lat},{lon})"
+    # 若手動輸入時缺少地址，透過經緯度補全
+    if (not city or not town) and (lat != 0 and lon != 0):
+        city, town = get_address_info(lat, lon)
+    
+    name = name or f"座標定位({city}{town})"
     
     CURRENT_LOCATION.update({
         "display_name": name,
