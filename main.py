@@ -491,31 +491,31 @@ def get_home_page():
             function saveManualSettings() {
                 var city = document.getElementById("citySelect").value;
                 var town = document.getElementById("townSelect").value;
-                var latlon = document.getElementById("latlonInput").value.trim();
+                var latlonInput = document.getElementById("latlonInput").value.trim();
                 
+                // 檢查縣市是否已選
                 if (!city || !town) { 
                     alert("請選擇縣市與鄉鎮！"); 
                     return; 
                 }
                 
-                var name = city + town;
+                // 如果有經緯度，直接發送；如果沒有，後端會自動根據地名查詢
                 var lat = 0, lon = 0;
-                
-                if (latlon) {
-                    var parts = latlon.split(",");
+                if (latlonInput) {
+                    var parts = latlonInput.split(",");
                     if (parts.length === 2) {
                         lat = parseFloat(parts[0].trim());
                         lon = parseFloat(parts[1].trim());
                     }
                 }
                 
-                fetch(`/api/set_manual?name=${encodeURIComponent(name)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
+                // 儲存設定
+                fetch(`/api/set_manual?name=${encodeURIComponent(city + town)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
                     .then(res => res.json())
                     .then(data => { 
-                        alert("設定儲存成功！"); 
+                        alert("設定已更新，系統將於下次排程自動同步。"); 
                         refreshStatus(); 
-                    })
-                    .catch(err => alert("儲存失敗：" + err));
+                    });
             }
         </script>
     </body>
@@ -549,38 +549,38 @@ def get_hanger_status():
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
     
-    CURRENT_LOCATION["display_name"] = "手機隨行點"
-    CURRENT_LOCATION["city"] = "南投縣"  
-    CURRENT_LOCATION["town"] = "埔里鎮"
-    CURRENT_LOCATION["lat"] = lat
-    CURRENT_LOCATION["lon"] = lon
-
     try:
         headers = {"User-Agent": "SmartHangerApp/4.0"}
         res = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1", headers=headers, timeout=3).json()
         addr = res.get("address", {})
+        
+        # 取得縣市與鄉鎮
         city = addr.get("county", "") or addr.get("city", "") or addr.get("state", "")
         town = addr.get("town", "") or addr.get("suburb", "") or addr.get("city_district", "")
         
-        if city: 
-            if "市" in city: city = city[city.find("市")-2:city.find("市")+1]
-            if "縣" in city: city = city[city.find("縣")-2:city.find("縣")+1]
-            if city.startswith("台"): city = "臺" + city[1:]
-            CURRENT_LOCATION["city"] = city
-        if town: 
-            CURRENT_LOCATION["town"] = town
-        CURRENT_LOCATION["display_name"] = f"GPS({CURRENT_LOCATION['city']}{CURRENT_LOCATION['town']})"
-    except:
-        pass
+        # 統一處理 "台" -> "臺"
+        if "市" in city: city = city[city.find("市")-2:city.find("市")+1]
+        if "縣" in city: city = city[city.find("縣")-2:city.find("縣")+1]
+        if city.startswith("台"): city = "臺" + city[1:]
+        
+        # 更新全域變數
+        CURRENT_LOCATION["city"] = city
+        CURRENT_LOCATION["town"] = town
+        CURRENT_LOCATION["lat"] = lat
+        CURRENT_LOCATION["lon"] = lon
+        CURRENT_LOCATION["display_name"] = f"GPS({city}{town})"
+        
+    except Exception as e:
+        print(f"❌ GPS 反查失敗: {e}")
+        # 如果反查失敗，保留原本的座標，但不要強制覆寫為埔里，
+        # 讓系統在下一次 fetch_weather_job 時使用目前的經緯度去搜尋最近測站即可。
 
-    # 🟢 這裡呼叫就不會再 NameError 了，因為它已被定義在上方
     fetch_weather_job()
     
-    # 🟢 直接回傳，不再手動判斷那些讀不到的變數
     return {
         "status": "SUCCESS", 
-        "lon": lon, 
-        "lat": lat,
+        "lon": CURRENT_LOCATION["lat"], 
+        "lat": CURRENT_LOCATION["lon"],
         "name": CURRENT_LOCATION["display_name"],
         "city": CURRENT_LOCATION["city"],
         "town": CURRENT_LOCATION["town"]
@@ -596,28 +596,24 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     CURRENT_LOCATION["city"] = city
     CURRENT_LOCATION["town"] = town
 
-    mode = "選單分區中心點定位"
+    # 判斷是否有有效經緯度
     if lat != 0.0 and lon != 0.0:
         CURRENT_LOCATION["lat"] = lat
         CURRENT_LOCATION["lon"] = lon
-        mode = "Google地圖公分級精準座標"
     else:
+        # 若沒有經緯度，才呼叫 Nominatim 搜尋經緯度
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
-            res = requests.get(f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city+town)}&format=json&limit=1", headers=headers, timeout=4).json()
-            if res and len(res) > 0:
+            query = f"{city}{town}"
+            res = requests.get(f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1", headers=headers, timeout=4).json()
+            if res:
                 CURRENT_LOCATION["lon"] = float(res[0]["lon"])
                 CURRENT_LOCATION["lat"] = float(res[0]["lat"])
-            else:
-                CURRENT_LOCATION["lon"] = 120.68
-                CURRENT_LOCATION["lat"] = 23.97
         except:
-            CURRENT_LOCATION["lon"] = 120.68
-            CURRENT_LOCATION["lat"] = 23.97
+            pass
 
-    # 🟢 正常呼叫
     fetch_weather_job()
-    return {"status": "SUCCESS", "name": name, "mode": mode}
+    return {"status": "SUCCESS", "message": "設定已儲存並同步"}
 
 
 @app.get("/api/event")
