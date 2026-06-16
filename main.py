@@ -489,6 +489,7 @@ def get_home_page():
             
 
             function saveManualSettings() {
+                var btn = event.target;
                 var city = document.getElementById("citySelect").value;
                 var town = document.getElementById("townSelect").value;
                 var latlonInput = document.getElementById("latlonInput").value.trim();
@@ -497,11 +498,13 @@ def get_home_page():
                     alert("請選擇縣市與鄉鎮！"); 
                     return; 
                 }
-                
+
+                // 1. 視覺上先行刷新：讓使用者立刻感覺到網頁已反應
+                document.getElementById("statusBox").innerText = "⏳ 正在儲存設定並準備同步...";
+                btn.disabled = true;
+
                 var lat = 0, lon = 0;
-                var hasLatLon = (latlonInput !== ""); // 是否有輸入座標
-                
-                if (hasLatLon) {
+                if (latlonInput) {
                     var parts = latlonInput.split(",");
                     if (parts.length === 2) {
                         lat = parseFloat(parts[0].trim());
@@ -509,17 +512,25 @@ def get_home_page():
                     }
                 }
                 
+                // 2. 發送儲存請求
                 fetch(`/api/set_manual?name=${encodeURIComponent(city + town)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
                     .then(res => res.json())
                     .then(data => { 
-                        // 如果沒填經緯度，才給予反查提示
-                        if (!hasLatLon) alert("已設定區域，系統正在反查經緯度...");
-                        
-                        // 無論如何，執行強制更新並刷新狀態
-                        fetch('/api/force_refresh');
-                        refreshStatus(); 
+                        // 3. 儲存成功後，觸發後端同步 (force_refresh)
+                        return fetch('/api/force_refresh');
                     })
-                    .catch(err => alert("儲存失敗，請檢查網路。"));
+                    .then(() => {
+                        // 4. 最後執行一次刷新，確保顯示最新的同步狀態
+                        refreshStatus();
+                        alert("同步完成！");
+                    })
+                    .catch(err => {
+                        alert("同步失敗，請檢查網路。");
+                        refreshStatus();
+                    })
+                    .finally(() => {
+                        btn.disabled = false;
+                    });
             }
         </script>
     </body>
