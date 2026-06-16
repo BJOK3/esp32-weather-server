@@ -699,32 +699,31 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
 @app.get("/api/set_by_gps")
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
-    
+
     city = ""
     town = ""
     name = f"座標定位({lat},{lon})"
 
     try:
-        # 增加 User-Agent 是必要的，否則 Nominatim 會拒絕連線
         headers = {"User-Agent": "SmartHangerApp/4.0"}
+        # 加入 accept-language=zh-TW，確保回傳的是中文地址
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
         
         res = requests.get(url, headers=headers, timeout=5)
-        res.raise_for_status() # 如果連線失敗會拋出錯誤
         data = res.json()
+        
+        # 關鍵：把原始回傳內容印出來，這樣你在 Render 的 Logs 就能看到 Nominatim 給了什麼資料
+        print(f"DEBUG: Nominatim raw data: {data}")
         
         addr = data.get("address", {})
         
-        # 擴大搜尋範圍，避免因為鍵值名稱對不上導致抓不到
-        # 台灣地址常見鍵值：county, city, town, city_district, suburb, village
+        # 擴充篩選邏輯，兼容不同格式
         city = addr.get("county") or addr.get("city") or addr.get("state") or ""
         town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or ""
         
         name = f"座標定位({city}{town})"
-        print(f"DEBUG: 解析結果 City={city}, Town={town}") # 觀察 console 看是否抓到了值
-        
     except Exception as e:
-        print(f"ERROR: 地理編碼失敗: {e}") # 在 logs 中查看具體錯誤原因
+        print(f"ERROR: 地理編碼異常: {e}")
         pass
 
     CURRENT_LOCATION.update({
