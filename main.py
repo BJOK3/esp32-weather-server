@@ -1,4 +1,9 @@
 import requests
+
+
+import paho.mqtt.client as mqtt
+
+
 from PIL import Image
 from io import BytesIO
 import time
@@ -15,6 +20,17 @@ import requests
 import urllib3
 from collections import deque
 event_queue = deque()
+
+MQTT_BROKER = "658761669c52448a9eb3d3576ab49e33.s1.eu.hivemq.cloud"
+MQTT_PORT = 8883
+MQTT_TOPIC = "hanger/command"
+
+mqtt_client = mqtt.Client()
+mqtt_client.username_pw_set("ESP32_Hanger", "a88888888A")
+mqtt_client.tls_set() # HiveMQ Cloud 需要 TLS 加密
+mqtt_client.connect(MQTT_BROKER, MQTT_PORT, 60)
+mqtt_client.loop_start()
+
 
 last_action = "NONE"
 
@@ -473,7 +489,12 @@ def get_home_page():
 
 
 
-
+# 修改您的 API 路由
+@app.get("/api/force_refresh")
+def force_refresh():
+    # 發送 REFRESH 指令
+    mqtt_client.publish(MQTT_TOPIC, "REFRESH")
+    return {"status": "SUCCESS", "message": "已通知 ESP32 更新"}
 
 # ================= 🌐 擴充狀態 API (唯一保留的正確版) =================
 @app.get("/hanger/status")
