@@ -523,7 +523,7 @@ def get_home_page():
                             .then(res => res.json())
                             .then(data => {
                                 if (data.status === "SUCCESS") {
-                                    alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
+                                    alert("🎉 定位成功！\\n已鎖定經緯度：" + data.lat + "," + data.lon);
                                     // 原本可能有的：updateDropdown(data.city, data.town); 
                                     // -> 直接註解掉或刪除這行，避免它去嘗試匹配不存在的選項
                                     refreshStatus();
