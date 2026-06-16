@@ -364,13 +364,11 @@ def get_home_page():
             <div style="display: flex; gap: 10px;">
                 <div class="form-group" style="flex: 1;">
                     <label>1. 縣市選單</label>
-                    <select id="citySelect" onchange="updateTownDropdown()">
+                    <select id="citySelect" onchange="updateTownDropdown(); checkLocationConsistency();">
                         <option value="">--請選擇--</option>
                     </select>
-                </div>
-                <div class="form-group" style="flex: 1;">
-                    <label>2. 鄉鎮市區</label>
-                    <select id="townSelect">
+
+                    <select id="townSelect" onchange="checkLocationConsistency();">
                         <option value="">--請選擇--</option>
                     </select>
                 </div>
@@ -412,6 +410,42 @@ def get_home_page():
                 "金門縣": ["金城鎮", "金湖鎮", "金沙鎮", "金寧鄉", "烈嶼鄉", "烏坵鄉"],
                 "連江縣": ["南竿鄉", "北竿鄉", "莒光鄉", "東引鄉"]
             };
+            
+            function calculateDistance(lat1, lon1, lat2, lon2) {
+                const R = 6371; // 地球半徑 (km)
+                const dLat = (lat2 - lat1) * Math.PI / 180;
+                const dLon = (lon2 - lon1) * Math.PI / 180;
+                const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                          Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+                          Math.sin(dLon/2) * Math.sin(dLon/2);
+                return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+            }
+            
+            function checkLocationConsistency() {
+                const latlonInput = document.getElementById("latlonInput").value;
+                const city = document.getElementById("citySelect").value;
+                
+                if (latlonInput && latlonInput.includes(",")) {
+                    const [lat, lon] = latlonInput.split(",").map(Number);
+                    
+                    // 這裡設定一個「中心點」的概念
+                    // 為了簡單處理，如果使用者選了縣市，我們對比該縣市的大致座標
+                    // 這裡使用 Nominatim API 的反查概念更精確
+                    fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&accept-language=zh-TW`)
+                        .then(res => res.json())
+                        .then(data => {
+                            if (data.address) {
+                                const realCity = data.address.county || data.address.city || "";
+                                // 如果選單選擇的城市與 GPS 反查出的城市不符
+                                if (city && !realCity.includes(city)) {
+                                    alert("⚠️ 偵測到您選擇的地區與經緯度位置不符！將為您清空經緯度。");
+                                    document.getElementById("latlonInput").value = "";
+                                }
+                            }
+                        })
+                        .catch(err => console.error("位置驗證失敗", err));
+                }
+            }
 
             window.onload = function() {
                 const citySelect = document.getElementById("citySelect");
