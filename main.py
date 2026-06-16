@@ -547,6 +547,8 @@ def get_home_page():
 # 修改您的 API 路由
 @app.get("/api/force_refresh")
 def force_refresh():
+    # 立即執行一次天氣檢查任務
+    fetch_weather_job()
     # 發送 REFRESH 指令
     mqtt_client.publish(MQTT_TOPIC, "REFRESH")
     return {"status": "SUCCESS", "message": "已通知 ESP32 更新"}
