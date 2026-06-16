@@ -1,8 +1,7 @@
 fastapi
 uvicorn
 requests
-urllib3
-apscheduler
-Pillow
 paho-mqtt
-tzlocal
+pillow
+apscheduler
+urllib3
