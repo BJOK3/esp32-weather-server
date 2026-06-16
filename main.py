@@ -641,20 +641,25 @@ def get_hanger_status():
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
     
-    # 情況 A：使用者只給了經緯度，沒有選縣市 -> 執行「反向地理編碼 (Reverse Geocoding)」
+    # 情況 A：經緯度轉地址 (Reverse Geocoding)
     if (not city or not town) and (lat != 0.0 and lon != 0.0):
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
-            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
             res = requests.get(url, headers=headers, timeout=5).json()
             addr = res.get("address", {})
-            city = addr.get("county", "") or addr.get("city", "")
-            town = addr.get("town", "") or addr.get("city_district", "") or addr.get("suburb", "")
+            
+            # --- 核心修正：加入更多可能的欄位名稱 ---
+            # 優先抓縣市：county -> city -> state
+            city = addr.get("county") or addr.get("city") or addr.get("state") or city
+            # 優先抓鄉鎮：town -> city_district -> suburb -> village -> hamlet
+            town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or addr.get("hamlet") or town
+            
             name = f"座標定位({city}{town})"
-        except:
-            pass 
+        except Exception as e:
+            print(f"DEBUG: Reverse Geocoding Error: {e}")
 
-    # 情況 B：使用者選了縣市，但沒給座標 -> 執行「正向地理編碼 (Geocoding)」
+    # 情況 B：地址轉經緯度 (Geocoding)
     elif (city and town) and (lat == 0.0 or lon == 0.0):
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
@@ -664,18 +669,19 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
             if res:
                 lat = float(res[0]["lat"])
                 lon = float(res[0]["lon"])
-        except:
-            pass
+        except Exception as e:
+            print(f"DEBUG: Geocoding Error: {e}")
 
-    # 更新全域變數
+    # 更新全域變數 (增加保護：若還是空的，給預設值)
     CURRENT_LOCATION.update({
-        "display_name": name,
-        "city": city,
-        "town": town,
+        "display_name": name or "未命名位置",
+        "city": city or "未知縣市",
+        "town": town or "未知鄉鎮",
         "lat": lat,
         "lon": lon
     })
 
+    print(f"DEBUG: 更新後的 CURRENT_LOCATION: {CURRENT_LOCATION}")
     fetch_weather_job()
     return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
