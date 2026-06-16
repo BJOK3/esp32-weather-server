@@ -706,24 +706,28 @@ def set_by_gps(lat: float, lon: float):
 
     try:
         headers = {"User-Agent": "SmartHangerApp/4.0"}
-        # 加入 accept-language=zh-TW，確保回傳的是中文地址
+        # 加入 accept-language=zh-TW 強制請求中文地址格式
         url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
-        
         res = requests.get(url, headers=headers, timeout=5)
         data = res.json()
         
-        # 關鍵：把原始回傳內容印出來，這樣你在 Render 的 Logs 就能看到 Nominatim 給了什麼資料
-        print(f"DEBUG: Nominatim raw data: {data}")
+        # 【重要】印出原始資料供除錯
+        print(f"DEBUG: Nominatim API 回傳資料: {data}")
         
         addr = data.get("address", {})
         
-        # 擴充篩選邏輯，兼容不同格式
+        # 擴充解析規則：嘗試更多可能的欄位組合
         city = addr.get("county") or addr.get("city") or addr.get("state") or ""
-        town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or ""
+        town = addr.get("town") or addr.get("city_district") or addr.get("suburb") or addr.get("village") or addr.get("district") or ""
         
-        name = f"座標定位({city}{town})"
+        # 如果解析出來還是空的，定義預設名稱
+        if city or town:
+            name = f"座標定位({city}{town})"
+        else:
+            name = f"座標定位({lat},{lon})"
+            
     except Exception as e:
-        print(f"ERROR: 地理編碼異常: {e}")
+        print(f"ERROR: 地理編碼失敗: {e}")
         pass
 
     CURRENT_LOCATION.update({
@@ -734,6 +738,7 @@ def set_by_gps(lat: float, lon: float):
         "lon": lon
     })
 
+    # 執行天氣任務
     fetch_weather_job()
     return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
