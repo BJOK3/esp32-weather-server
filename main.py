@@ -526,7 +526,7 @@ def get_home_page():
                                     alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
                                     // 原本可能有的：updateDropdown(data.city, data.town); 
                                     // -> 直接註解掉或刪除這行，避免它去嘗試匹配不存在的選項
-                                    document.getElementById("status_display").innerText = "已鎖定座標模式";
+                                    refreshStatus(); = "已鎖定座標模式";
                                 }
                             })
                             .catch(err => alert("伺服器連線失敗"));
@@ -638,34 +638,38 @@ def get_hanger_status():
 
 
 # ================= 🌐 後端 API：手機 GPS 定位 =================
-@app.get("/api/set_by_gps")
-def set_by_gps(lat: float, lon: float):
-    global CURRENT_LOCATION
-    
-    # --- 直接跳過地址解析 ---
-    # 簡單標記為「未定名稱」，僅保留經緯度
-    city = "自動定位"
-    town = "座標模式"
-    
-    # 直接更新狀態
-    CURRENT_LOCATION.update({
-        "city": city,
-        "town": town,
-        "lat": lat,
-        "lon": lon,
-        "display_name": f"緯度:{lat}, 經度:{lon}"
-    })
-    
-    # 執行後續邏輯 (如天氣獲取)
-    fetch_weather_job()
-    
-    return {
-        "status": "SUCCESS", 
-        "city": city, 
-        "town": town, 
-        "lat": lat, 
-        "lon": lon
+// 在原本的 <script> 區塊中，請改為這樣宣告
+window.getPhoneGPS = function() {
+    if (!navigator.geolocation) {
+        alert("您的瀏覽器不支援定位功能。");
+        return;
     }
+
+    document.getElementById("statusBox").innerText = "⏳ 正在取得 GPS 定位...";
+    
+    navigator.geolocation.getCurrentPosition(
+        function(position) {
+            var lat = position.coords.latitude.toFixed(6);
+            var lon = position.coords.longitude.toFixed(6);
+            
+            document.getElementById("statusBox").innerText = "⏳ 定位成功，正在回傳後端...";
+            
+            fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "SUCCESS") {
+                        alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
+                        refreshStatus();
+                    }
+                })
+                .catch(err => alert("伺服器連線失敗"));
+        },
+        function(error) {
+            alert("定位失敗，請確保已開啟 GPS 權限。");
+        },
+        { enableHighAccuracy: true, timeout: 10000 }
+    );
+}
 
 # ================= 🌐 後端 API：手動選單儲存 =================
 @app.get("/api/set_manual")
