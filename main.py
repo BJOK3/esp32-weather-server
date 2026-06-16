@@ -135,7 +135,7 @@ def fetch_weather_job():
             radar_verdict = "SAFE"
 
 # ==================== 修改位置：fetch_weather_job() 內的決策邏輯 ====================
-                # 5. 決策邏輯
+        # 5. 決策邏輯
         rain_trend_score = 0
         if rain_10m > 1.0:
             rain_trend_score += 3
@@ -367,20 +367,29 @@ def get_home_page():
                     .then(data => { refreshStatus(); });
             }
 
+            // 修改後的 getPhoneGPS 函式
             function getPhoneGPS() {
                 if (navigator.geolocation) {
                     document.getElementById("statusBox").innerText = "⏳ 正在向手機索取 GPS 座標...";
                     navigator.geolocation.getCurrentPosition(function(position) {
-                        var lat = position.coords.latitude; var lon = position.coords.longitude;
+                        var lat = position.coords.latitude;
+                        var lon = position.coords.longitude;
+                        
                         fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
                             .then(res => res.json()).then(data => {
-                                alert(`🎉 手機定位同步成功！\\n鎖定區域：${data.city}${data.town}`);
+                                alert(`🎉 手機定位同步成功！\n鎖定區域：${data.city}${data.town}`);
                                 refreshStatus();
-                                document.getElementById("nameInput").value = data.name;
+                                
+                                // 【修正】將正確的經緯度回填到輸入框
+                                document.getElementById("latlonInput").value = `${data.lat},${data.lon}`;
+                                
+                                // 若需要設定縣市選單
                                 document.getElementById("citySelect").value = data.city;
                                 updateTownDropdown(data.town);
                             });
                     });
+                } else {
+                    alert("您的瀏覽器不支援定位功能。");
                 }
             }
 
