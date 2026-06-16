@@ -638,7 +638,7 @@ def get_hanger_status():
 
 
 # ================= 🌐 後端 API：手機 GPS 定位 =================
-// 在原本的 <script> 區塊中，請改為這樣宣告
+
 window.getPhoneGPS = function() {
     if (!navigator.geolocation) {
         alert("您的瀏覽器不支援定位功能。");
