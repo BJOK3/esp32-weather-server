@@ -97,15 +97,8 @@ def find_nearest_station(stations, target_lat, target_lon):
             continue
     return nearest
 
-last_fetch_time = 0
-
 def fetch_weather_job():
-    global current_cached_status, CURRENT_LOCATION, last_action, REMOTE_COMMAND, last_fetch_time
-    
-    # 【防抖保護】距離上次執行若少於 30 秒，則直接跳過，防止頻繁觸發
-    if time.time() - last_fetch_time < 30:
-        return
-    last_fetch_time = time.time()
+    global current_cached_status, CURRENT_LOCATION, last_action, REMOTE_COMMAND
     
     # 檢查是否已設定有效位置 (緯度不為 0)
     if CURRENT_LOCATION["lat"] == 0.0 or CURRENT_LOCATION["lon"] == 0.0:
@@ -499,7 +492,7 @@ def get_home_page():
                         document.getElementById("statusBox").innerText = text;
                     });
             }
-            setInterval(refreshStatus, 30000);
+            setInterval(refreshStatus, 4000);
 
             
             function sendControl(cmd) {
@@ -563,55 +556,51 @@ def get_home_page():
 
             
 
-function saveManualSettings() {
-    var btn = event.target;
-    var city = document.getElementById("citySelect").value;
-    var town = document.getElementById("townSelect").value;
-    var latlonInput = document.getElementById("latlonInput").value.trim();
-    
-    if ((!city || !town) && !latlonInput) { 
-        alert("請選擇縣市鄉鎮，或直接輸入經緯度座標！"); 
-        return; 
-    }
+            function saveManualSettings() {
+                var btn = event.target;
+                var city = document.getElementById("citySelect").value;
+                var town = document.getElementById("townSelect").value;
+                var latlonInput = document.getElementById("latlonInput").value.trim();
+                
+                if ((!city || !town) && !latlonInput) { 
+                    alert("請選擇縣市鄉鎮，或直接輸入經緯度座標！"); 
+                    return; 
+                }
 
-    // 1. 視覺上先行刷新：讓使用者立刻感覺到網頁已反應
-    document.getElementById("statusBox").innerText = "⏳ 正在儲存設定並準備同步...";
-    btn.disabled = true; // 鎖定按鈕，防止連續點擊
+                // 1. 視覺上先行刷新：讓使用者立刻感覺到網頁已反應
+                document.getElementById("statusBox").innerText = "⏳ 正在儲存設定並準備同步...";
+                btn.disabled = true;
 
-    var lat = 0, lon = 0;
-    var displayName = (city && town) ? (city + town) : "自訂座標";
-    if (latlonInput) {
-        var parts = latlonInput.split(",");
-        if (parts.length === 2) {
-            lat = parseFloat(parts[0].trim());
-            lon = parseFloat(parts[1].trim());
-        }
-    }
-    
-    // 2. 發送儲存請求
-    fetch(`/api/set_manual?name=${encodeURIComponent(displayName)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
-        .then(res => res.json())
-        .then(data => { 
-            // 3. 儲存成功後，觸發後端強制更新
-            return fetch('/api/force_refresh');
-        })
-        .then(() => {
-            // 4. 【關鍵修改】：等待 2 秒再執行刷新
-            // 讓後端處理完 MQTT 訊息與氣象資料後，前端再讀取最新的狀態
-            setTimeout(() => {
-                refreshStatus();
-                alert("同步完成！");
-            }, 2000); 
-        })
-        .catch(err => {
-            alert("同步失敗，請檢查網路。");
-            refreshStatus();
-        })
-        .finally(() => {
-            // 恢復按鈕功能
-            btn.disabled = false;
-        });
-}
+                var lat = 0, lon = 0;
+                var displayName = (city && town) ? (city + town) : "自訂座標";
+                if (latlonInput) {
+                    var parts = latlonInput.split(",");
+                    if (parts.length === 2) {
+                        lat = parseFloat(parts[0].trim());
+                        lon = parseFloat(parts[1].trim());
+                    }
+                }
+                
+                // 2. 發送儲存請求
+                fetch(`/api/set_manual?name=${encodeURIComponent(displayName)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
+                    .then(res => res.json())
+                    .then(data => { 
+                        // 3. 儲存成功後，觸發後端同步 (force_refresh)
+                        return fetch('/api/force_refresh');
+                    })
+                    .then(() => {
+                        // 4. 最後執行一次刷新，確保顯示最新的同步狀態
+                        refreshStatus();
+                        alert("同步完成！");
+                    })
+                    .catch(err => {
+                        alert("同步失敗，請檢查網路。");
+                        refreshStatus();
+                    })
+                    .finally(() => {
+                        btn.disabled = false;
+                    });
+            }
         </script>
     </body>
     </html>
@@ -694,34 +683,21 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
 @app.get("/api/set_by_gps")
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
-    
+
     city = ""
     town = ""
     name = f"座標定位({lat},{lon})"
 
     try:
         headers = {"User-Agent": "SmartHangerApp/4.0"}
-        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
+        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
         res = requests.get(url, headers=headers, timeout=5).json()
-        
-        # 取得 address 字典
         addr = res.get("address", {})
-        
-        # 增加除錯資訊，部署後請查看 Render Logs
-        print(f"DEBUG: API回傳的地址資訊: {addr}")
-
-        # 這裡的邏輯改得更廣泛，確保一定能抓到
-        city = addr.get("county") or addr.get("city") or addr.get("state") or ""
-        town = addr.get("town") or addr.get("city_district") or addr.get("district") or addr.get("village") or addr.get("suburb") or ""
-        
+        city = addr.get("county", "") or addr.get("city", "")
+        town = addr.get("town", "") or addr.get("city_district", "") or addr.get("suburb", "")
         name = f"座標定位({city}{town})"
-        
-    except Exception as e:
-        print(f"❌ 定位失敗: {e}")
-
-    # 若解析出來的 city 為空，給一個預設值，避免系統報錯 (選做)
-    if not city: city = "未知地區"
-    if not town: town = "未知區域"
+    except:
+        pass
 
     CURRENT_LOCATION.update({
         "display_name": name,
