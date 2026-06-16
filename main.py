@@ -519,8 +519,8 @@ def get_home_page():
                 var town = document.getElementById("townSelect").value;
                 var latlonInput = document.getElementById("latlonInput").value.trim();
                 
-                if (!city || !town) { 
-                    alert("請選擇縣市與鄉鎮！"); 
+                if ((!city || !town) && !latlonInput) { 
+                    alert("請選擇縣市鄉鎮，或直接輸入經緯度座標！"); 
                     return; 
                 }
 
@@ -529,6 +529,7 @@ def get_home_page():
                 btn.disabled = true;
 
                 var lat = 0, lon = 0;
+                var displayName = (city && town) ? (city + town) : "自訂座標";
                 if (latlonInput) {
                     var parts = latlonInput.split(",");
                     if (parts.length === 2) {
@@ -538,7 +539,7 @@ def get_home_page():
                 }
                 
                 // 2. 發送儲存請求
-                fetch(`/api/set_manual?name=${encodeURIComponent(city + town)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
+                fetch(`/api/set_manual?name=${encodeURIComponent(displayName)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
                     .then(res => res.json())
                     .then(data => { 
                         // 3. 儲存成功後，觸發後端同步 (force_refresh)
@@ -640,28 +641,43 @@ def set_by_gps(lat: float, lon: float):
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
     
-    CURRENT_LOCATION["display_name"] = name
-    CURRENT_LOCATION["city"] = city
-    CURRENT_LOCATION["town"] = town
+    # 情況 A：使用者只給了經緯度，沒有選縣市 -> 執行「反向地理編碼 (Reverse Geocoding)」
+    if (not city or not town) and (lat != 0.0 and lon != 0.0):
+        try:
+            headers = {"User-Agent": "SmartHangerApp/4.0"}
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
+            res = requests.get(url, headers=headers, timeout=5).json()
+            addr = res.get("address", {})
+            city = addr.get("county", "") or addr.get("city", "")
+            town = addr.get("town", "") or addr.get("city_district", "") or addr.get("suburb", "")
+            name = f"座標定位({city}{town})"
+        except:
+            pass 
 
-    # 判斷是否有有效經緯度
-    if lat != 0.0 and lon != 0.0:
-        CURRENT_LOCATION["lat"] = lat
-        CURRENT_LOCATION["lon"] = lon
-    else:
-        # 若沒有經緯度，才呼叫 Nominatim 搜尋經緯度
+    # 情況 B：使用者選了縣市，但沒給座標 -> 執行「正向地理編碼 (Geocoding)」
+    elif (city and town) and (lat == 0.0 or lon == 0.0):
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
             query = f"{city}{town}"
-            res = requests.get(f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1", headers=headers, timeout=4).json()
+            url = f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(query)}&format=json&limit=1"
+            res = requests.get(url, headers=headers, timeout=5).json()
             if res:
-                CURRENT_LOCATION["lon"] = float(res[0]["lon"])
-                CURRENT_LOCATION["lat"] = float(res[0]["lat"])
+                lat = float(res[0]["lat"])
+                lon = float(res[0]["lon"])
         except:
             pass
 
+    # 更新全域變數
+    CURRENT_LOCATION.update({
+        "display_name": name,
+        "city": city,
+        "town": town,
+        "lat": lat,
+        "lon": lon
+    })
+
     fetch_weather_job()
-    return {"status": "SUCCESS", "message": "設定已儲存並同步"}
+    return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
 
 @app.get("/api/event")
