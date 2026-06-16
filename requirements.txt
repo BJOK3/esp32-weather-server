@@ -4,4 +4,4 @@ requests
 urllib3
 apscheduler
 Pillow
-requests
+paho-mqtt
