@@ -633,30 +633,32 @@ def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
     
     try:
+        # 增加 User-Agent 是正確的，Nominatim 要求必須提供
         headers = {"User-Agent": "SmartHangerApp/4.0"}
-        res = requests.get(f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&addressdetails=1", headers=headers, timeout=3).json()
+        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
+        res = requests.get(url, headers=headers, timeout=5).json()
         addr = res.get("address", {})
         
-        # 取得縣市與鄉鎮
-        city = addr.get("county", "") or addr.get("city", "") or addr.get("state", "")
-        town = addr.get("town", "") or addr.get("suburb", "") or addr.get("city_district", "")
+        # --- 改進後的解析邏輯 ---
+        # 台灣地址常見結構為：city (縣市), town/district (鄉鎮區)
+        city = addr.get("county") or addr.get("city") or ""
+        town = addr.get("town") or addr.get("city_district") or addr.get("district") or ""
         
-        # 統一處理 "台" -> "臺"
-        if "市" in city: city = city[city.find("市")-2:city.find("市")+1]
-        if "縣" in city: city = city[city.find("縣")-2:city.find("縣")+1]
-        if city.startswith("台"): city = "臺" + city[1:]
-        
+        # 若仍抓不到，記錄 log 以便除錯
+        if not city or not town:
+            print(f"Debug: 無法解析地址，回傳完整資訊: {addr}")
+
         # 更新全域變數
-        CURRENT_LOCATION["city"] = city
-        CURRENT_LOCATION["town"] = town
-        CURRENT_LOCATION["lat"] = lat
-        CURRENT_LOCATION["lon"] = lon
-        CURRENT_LOCATION["display_name"] = f"GPS({city}{town})"
+        CURRENT_LOCATION.update({
+            "city": city,
+            "town": town,
+            "lat": lat,
+            "lon": lon,
+            "display_name": f"GPS({city}{town})"
+        })
         
     except Exception as e:
         print(f"❌ GPS 反查失敗: {e}")
-        # 如果反查失敗，保留原本的座標，但不要強制覆寫為埔里，
-        # 讓系統在下一次 fetch_weather_job 時使用目前的經緯度去搜尋最近測站即可。
 
     fetch_weather_job()
     
@@ -664,7 +666,6 @@ def set_by_gps(lat: float, lon: float):
         "status": "SUCCESS", 
         "lat": CURRENT_LOCATION["lat"], 
         "lon": CURRENT_LOCATION["lon"],
-        "name": CURRENT_LOCATION["display_name"],
         "city": CURRENT_LOCATION["city"],
         "town": CURRENT_LOCATION["town"]
     }
