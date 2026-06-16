@@ -289,7 +289,7 @@ def get_home_page():
             </div>
             <div class="form-group">
                 <label>3. 精準經緯度座標 (選填)</label>
-                <input type="text" id="latlonInput" value="__LAT_LON_VALUE__">
+                <input type="text" id="latlonInput" value="__LAT_LON_VALUE__" placeholder="緯度, 經度">
             </div>
 
             <button class="btn-save" onclick="saveManualSettings()">💾 儲存手動設定並立即同步</button>
@@ -372,8 +372,8 @@ def get_home_page():
                 if (navigator.geolocation) {
                     document.getElementById("statusBox").innerText = "⏳ 正在向手機索取 GPS 座標...";
                     navigator.geolocation.getCurrentPosition(function(position) {
-                        var lat = position.coords.latitude;
-                        var lon = position.coords.longitude;
+                        var lat = position.coords.latitude.toFixed(6);
+                        var lon = position.coords.longitude.toFixed(6);
                         
                         fetch(`/api/set_by_gps?lat=${lat}&lon=${lon}`)
                             .then(res => res.json()).then(data => {
