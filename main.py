@@ -1,6 +1,5 @@
 import requests
 
-
 import paho.mqtt.client as mqtt
 import math
 
@@ -468,6 +467,7 @@ def get_home_page():
                     opt.value = city; opt.innerHTML = city;
                     citySelect.appendChild(opt);
                 }
+                checkModeOnLoad();
                 refreshStatus();
             };
 
@@ -523,7 +523,7 @@ def get_home_page():
                             .then(res => res.json())
                             .then(data => {
                                 if (data.status === "SUCCESS") {
-                                    alert("🎉 定位成功！\\n已鎖定經緯度：" + data.lat + "," + data.lon);
+                                    alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
                                     // 原本可能有的：updateDropdown(data.city, data.town); 
                                     // -> 直接註解掉或刪除這行，避免它去嘗試匹配不存在的選項
                                     refreshStatus();
@@ -669,37 +669,6 @@ def set_manual(name: str, city: str, town: str, lat: float, lon: float):
             pass
 
     # 更新全域變數
-    CURRENT_LOCATION.update({
-        "display_name": name,
-        "city": city,
-        "town": town,
-        "lat": lat,
-        "lon": lon
-    })
-
-    fetch_weather_job()
-    return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
-
-
-@app.get("/api/set_by_gps")
-def set_by_gps(lat: float, lon: float):
-    global CURRENT_LOCATION
-
-    city = ""
-    town = ""
-    name = f"座標定位({lat},{lon})"
-
-    try:
-        headers = {"User-Agent": "SmartHangerApp/4.0"}
-        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json"
-        res = requests.get(url, headers=headers, timeout=5).json()
-        addr = res.get("address", {})
-        city = addr.get("county", "") or addr.get("city", "")
-        town = addr.get("town", "") or addr.get("city_district", "") or addr.get("suburb", "")
-        name = f"座標定位({city}{town})"
-    except:
-        pass
-
     CURRENT_LOCATION.update({
         "display_name": name,
         "city": city,
