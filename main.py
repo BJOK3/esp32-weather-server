@@ -13,7 +13,7 @@ from io import BytesIO
 import urllib.parse
 from zoneinfo import ZoneInfo
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from PIL import Image
 import requests
@@ -648,7 +648,12 @@ def get_home_page():
                 
                 // 2. 發送儲存請求
                 fetch(`/api/set_manual?name=${encodeURIComponent(displayName)}&city=${encodeURIComponent(city)}&town=${encodeURIComponent(town)}&lat=${lat}&lon=${lon}`)
-                    .then(res => res.json())
+                    .then(res => {
+                        if (!res.ok) {
+                            return res.json().then(err => { throw new Error(err.detail || "儲存失敗"); });
+                        }
+                        return res.json();
+                    })
                     .then(data => { 
                         // 3. 儲存成功後，觸發後端同步 (force_refresh)
                         return fetch('/api/force_refresh');
@@ -659,7 +664,7 @@ def get_home_page():
                         alert("同步完成！");
                     })
                     .catch(err => {
-                        alert("同步失敗，請檢查網路。");
+                        alert("同步失敗：" + (err.message || "請檢查網路後重試。"));
                         refreshStatus();
                     })
                     .finally(() => {
@@ -708,7 +713,7 @@ def set_by_gps(lat: float, lon: float):
     
     CURRENT_LOCATION["display_name"] = "手機隨行點"
     CURRENT_LOCATION["city"] = "南投縣"  
-    CURRENT_LOCATION["town"] = "埔里鎮"
+    CURRENT_LOCATION["town"] = "草屯鎮"
     CURRENT_LOCATION["lat"] = lat
     CURRENT_LOCATION["lon"] = lon
 
@@ -747,29 +752,32 @@ def set_by_gps(lat: float, lon: float):
 @app.get("/api/set_manual")
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
-    
-    CURRENT_LOCATION["display_name"] = name
-    CURRENT_LOCATION["city"] = city
-    CURRENT_LOCATION["town"] = town
 
     mode = "選單分區中心點定位"
     if lat != 0.0 and lon != 0.0:
-        CURRENT_LOCATION["lat"] = lat
-        CURRENT_LOCATION["lon"] = lon
+        final_lat, final_lon = lat, lon
         mode = "Google地圖公分級精準座標"
     else:
         try:
             headers = {"User-Agent": "SmartHangerApp/4.0"}
             res = requests.get(f"https://nominatim.openstreetmap.org/search?q={urllib.parse.quote(city+town)}&format=json&limit=1", headers=headers, timeout=4).json()
             if res and len(res) > 0:
-                CURRENT_LOCATION["lon"] = float(res[0]["lon"])
-                CURRENT_LOCATION["lat"] = float(res[0]["lat"])
+                final_lat = float(res[0]["lat"])
+                final_lon = float(res[0]["lon"])
             else:
-                CURRENT_LOCATION["lon"] = 120.68
-                CURRENT_LOCATION["lat"] = 23.97
-        except:
-            CURRENT_LOCATION["lon"] = 120.68
-            CURRENT_LOCATION["lat"] = 23.97
+                # 查不到座標：不寫入 CURRENT_LOCATION，直接回錯誤讓使用者重選地區
+                raise HTTPException(status_code=404, detail=f"查無「{city}{town}」的座標，請重新選擇地區或改用 GPS 定位。")
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=502, detail="地理編碼服務查詢失敗，請稍後再試或改用 GPS 定位。")
+
+    # 查詢成功才更新位置資訊
+    CURRENT_LOCATION["display_name"] = name
+    CURRENT_LOCATION["city"] = city
+    CURRENT_LOCATION["town"] = town
+    CURRENT_LOCATION["lat"] = final_lat
+    CURRENT_LOCATION["lon"] = final_lon
 
     # 🟢 正常呼叫
     fetch_weather_job()
