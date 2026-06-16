@@ -96,17 +96,33 @@ def reverse_geocode(lat, lon):
         return {"city": "", "town": ""}
 
 def parse_taiwan_address(addr):
-    # 列印出 Nominatim 實際回傳的內容，讓我們在 Render 的 logs 看到
     print(f"DEBUG: Nominatim raw address: {addr}")
     
-    city = addr.get("county") or addr.get("city") or addr.get("state") or ""
-    town = addr.get("town") or addr.get("city_district") or addr.get("district") or addr.get("suburb") or ""
+    city = (
+        addr.get("county") or 
+        addr.get("city") or 
+        addr.get("state") or 
+        addr.get("region") or ""
+    )
     
-    # 針對台灣地址的校正
-    if "臺北市" in city or "台北市" in city: city = "臺北市"
-    if "新北市" in city: city = "新北市"
+    town = (
+        addr.get("town") or 
+        addr.get("city_district") or 
+        addr.get("suburb") or 
+        addr.get("village") or 
+        addr.get("hamlet") or 
+        addr.get("neighbourhood") or ""
+    )
     
-    return city, town
+    # 台灣縣市名稱校正
+    city = city.replace("臺北市", "臺北市").replace("台北市", "臺北市")
+    if "新北" in city: city = "新北市"
+    if "桃園" in city: city = "桃園市"
+    if "臺中" in city or "台中" in city: city = "臺中市"
+    if "臺南" in city or "台南" in city: city = "臺南市"
+    if "高雄" in city: city = "高雄市"
+    
+    return city.strip(), town.strip()
 
 def get_distance(lat1, lon1, lat2, lon2):
     # 計算兩點距離 (公里)
@@ -680,10 +696,35 @@ def get_hanger_status():
 @app.get("/api/set_by_gps")
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
-    city, town = get_address_info(lat, lon)
     
-    # 若 city 有值才顯示名稱，否則顯示座標
-    name = f"座標定位({city}{town})" if city else f"座標定位({lat},{lon})"
+    city = town = name = ""
+    try:
+        headers = {"User-Agent": "SmartHangerApp/4.0"}
+        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
+        
+        res = requests.get(url, headers=headers, timeout=8)
+        res.raise_for_status()
+        data = res.json()
+        
+        addr = data.get("address", {})
+        city, town = parse_taiwan_address(addr)
+        
+        if not city and not town:
+            # 最後保底：用 display_name 簡單拆
+            display = data.get("display_name", "")
+            if "縣" in display or "市" in display:
+                parts = display.split(",")
+                for p in parts:
+                    p = p.strip()
+                    if ("縣" in p or "市" in p) and len(p) > 2:
+                        city = p
+                        break
+        
+        name = f"座標定位({city or '未知'}{town or ''})"
+        print(f"✅ GPS 解析成功 → City: {city}, Town: {town}")
+        
+    except Exception as e:
+        print(f"❌ Nominatim 失敗: {e}")
     
     CURRENT_LOCATION.update({
         "display_name": name,
@@ -692,7 +733,7 @@ def set_by_gps(lat: float, lon: float):
         "lat": lat,
         "lon": lon
     })
-    
+
     fetch_weather_job()
     return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
 
@@ -700,22 +741,24 @@ def set_by_gps(lat: float, lon: float):
 def set_manual(name: str, city: str, town: str, lat: float, lon: float):
     global CURRENT_LOCATION
     
-    # 若手動輸入時缺少地址，透過經緯度補全
-    if (not city or not town) and (lat != 0 and lon != 0):
-        city, town = get_address_info(lat, lon)
-    
-    name = name or f"座標定位({city}{town})"
-    
-    CURRENT_LOCATION.update({
-        "display_name": name,
-        "city": city,
-        "town": town,
-        "lat": lat,
-        "lon": lon
-    })
-    
-    fetch_weather_job()
-    return {"status": "SUCCESS", "city": city, "town": town, "lat": lat, "lon": lon}
+    # 情況 A：使用者只給了經緯度，沒有選縣市 -> 執行「反向地理編碼 (Reverse Geocoding)」
+    if (not city or not town) and (lat != 0.0 and lon != 0.0):
+        try:
+            headers = {"User-Agent": "SmartHangerApp/4.0"}
+            url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
+            res = requests.get(url, headers=headers, timeout=8)
+            res.raise_for_status()
+            data = res.json()
+            
+            addr = data.get("address", {})
+            city, town = parse_taiwan_address(addr)   # ← 改用這個函式！
+            
+            name = f"座標定位({city}{town})"
+            print(f"DEBUG [set_manual]: City={city}, Town={town}")
+            
+        except Exception as e:
+            print(f"❌ set_manual 反向地理編碼失敗: {e}")
+            pass 
 
 
 @app.get("/api/event")
