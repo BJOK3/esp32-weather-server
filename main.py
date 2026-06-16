@@ -523,13 +523,10 @@ def get_home_page():
                             .then(res => res.json())
                             .then(data => {
                                 if (data.status === "SUCCESS") {
-                                    alert(`🎉 定位成功！\n鎖定區域：${data.city}${data.town}`);
-                                    document.getElementById("latlonInput").value = `${data.lat},${data.lon}`;
-                                    document.getElementById("citySelect").value = data.city;
-                                    updateTownDropdown(data.town);
-                                    refreshStatus();
-                                } else {
-                                    alert("定位成功，但地址解析失敗，請手動選擇。");
+                                    alert("🎉 定位成功！\n已鎖定經緯度：" + data.lat + "," + data.lon);
+                                    // 原本可能有的：updateDropdown(data.city, data.town); 
+                                    // -> 直接註解掉或刪除這行，避免它去嘗試匹配不存在的選項
+                                    document.getElementById("status_display").innerText = "已鎖定座標模式";
                                 }
                             })
                             .catch(err => alert("伺服器連線失敗"));
@@ -644,38 +641,31 @@ def get_hanger_status():
 @app.get("/api/set_by_gps")
 def set_by_gps(lat: float, lon: float):
     global CURRENT_LOCATION
-    try:
-        headers = {"User-Agent": "SmartHangerApp/4.0"}
-        url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&accept-language=zh-TW"
-        res = requests.get(url, headers=headers, timeout=5).json()
-        addr = res.get("address", {})
-        
-        city, town = parse_taiwan_address(addr)
-        
-        # 如果解析出來還是空的，設定預設值避免系統卡死
-        if not city: city = "未知地區"
-        if not town: town = "未知鄉鎮"
-
-        CURRENT_LOCATION.update({
-            "city": city,
-            "town": town,
-            "lat": lat,
-            "lon": lon,
-            "display_name": f"GPS({city}{town})"
-        })
-        
-        # 立即執行一次天氣檢查確保狀態同步
-        fetch_weather_job()
-        
-        return {
-            "status": "SUCCESS", 
-            "city": city, 
-            "town": town, 
-            "lat": lat, 
-            "lon": lon
-        }
-    except Exception as e:
-        return {"status": "ERROR", "message": str(e)}
+    
+    # --- 直接跳過地址解析 ---
+    # 簡單標記為「未定名稱」，僅保留經緯度
+    city = "自動定位"
+    town = "座標模式"
+    
+    # 直接更新狀態
+    CURRENT_LOCATION.update({
+        "city": city,
+        "town": town,
+        "lat": lat,
+        "lon": lon,
+        "display_name": f"緯度:{lat}, 經度:{lon}"
+    })
+    
+    # 執行後續邏輯 (如天氣獲取)
+    fetch_weather_job()
+    
+    return {
+        "status": "SUCCESS", 
+        "city": city, 
+        "town": town, 
+        "lat": lat, 
+        "lon": lon
+    }
 
 # ================= 🌐 後端 API：手動選單儲存 =================
 @app.get("/api/set_manual")
