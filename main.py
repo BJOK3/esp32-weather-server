@@ -467,7 +467,6 @@ def get_home_page():
                     opt.value = city; opt.innerHTML = city;
                     citySelect.appendChild(opt);
                 }
-                checkModeOnLoad();
                 refreshStatus();
             };
 
