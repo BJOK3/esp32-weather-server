@@ -92,22 +92,35 @@ def fetch_weather_job():
                 wind_speed = safe_float(obs.get("WindSpeed", 0.0))
                 wind_dir = safe_float(obs.get("WindDirection", 0.0))
 
-        # 3. 抓取預報 (F-C0032-001)
-        forecast_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={AUTH_KEY}&elementName=PoP&format=JSON"
+        # 3. 抓取預報 (F-C0032-001) - 同時請求 PoP (機率) 與 Wx (天氣現象文字)
+        forecast_url = f"https://opendata.cwa.gov.tw/api/v1/rest/datastore/F-C0032-001?Authorization={AUTH_KEY}&elementName=PoP,Wx&format=JSON"
         pop_res = requests.get(forecast_url, timeout=8, verify=False)
+        
+        weather_desc = "未知" # 新增變數儲存天氣文字
+        
         if pop_res.status_code == 200:
             locations = pop_res.json().get("records", {}).get("location", [])
             city_data = next((loc for loc in locations if loc.get("locationName") == city_name), None)
+            
             if city_data:
                 elements = city_data.get("weatherElement", [])
+                
+                # 解析降雨機率 (PoP)
                 pop_elem = next((el for el in elements if el.get("elementName") == "PoP"), None)
                 if pop_elem and "time" in pop_elem:
                     val = pop_elem["time"][0].get("parameter", {}).get("parameterName", "0")
                     pop = int(val) if val.isdigit() else 0
-                    print(f"[CWA 預報] {city_name} 降雨機率: {pop}%")
+                
+                # 【新增】解析天氣現象 (Wx)
+                wx_elem = next((el for el in elements if el.get("elementName") == "Wx"), None)
+                if wx_elem and "time" in wx_elem:
+                    weather_desc = wx_elem["time"][0].get("parameter", {}).get("parameterName", "未知")
+                
+                print(f"[CWA 預報] {city_name} 天氣: {weather_desc}, 降雨機率: {pop}%")
 
-        # 4. 雷達圖分析 (O-A0058-003)
+# 4. 雷達圖分析 (O-A0058-003)
         radar_api_url = f"https://opendata.cwa.gov.tw/fileapi/v1/opendataapi/O-A0058-003?Authorization={AUTH_KEY}&downloadType=WEB&format=JSON"
+        radar_score = 0 # 新增：將雷達風險量化為 0-10 的數字
         try:
             radar_res = requests.get(radar_api_url, timeout=12, verify=False)
             if radar_res.status_code == 200:
@@ -117,22 +130,28 @@ def fetch_weather_job():
                     img = Image.open(BytesIO(img_res.content)).convert("RGB")
                     lat_val = CURRENT_LOCATION["lat"]
                     lon_val = CURRENT_LOCATION["lon"]
+                    
                     if lat_val > 0 and lon_val > 0:
                         pixel_x = int((lon_val - 118.0) / (124.0 - 118.0) * 3600)
                         pixel_y = int((26.5 - lat_val) / (26.5 - 20.5) * 3600)
                         danger_pixels = 0
+                        # 檢查 11x11 的範圍
                         for dx in range(-5, 6):
                             for dy in range(-5, 6):
                                 tx, ty = pixel_x + dx, pixel_y + dy
                                 if 0 <= tx < 3600 and 0 <= ty < 3600:
                                     r, g, b = img.getpixel((tx, ty))
+                                    # 根據實際像素顏色判斷降雨強度
                                     if r > 50 or g > 50 or b > 50:
                                         danger_pixels += 1
-                        radar_verdict = "DANGER" if danger_pixels >= 8 else "SAFE"
-                        print(f"[雷達] 危險點數: {danger_pixels} → {radar_verdict}")
+                        
+                        # 【改進】將雷達像素數轉換為 0-10 分數
+                        # 假設檢測範圍共 121 點，danger_pixels 佔比越高，風險分數越高
+                        radar_score = min(10, int((danger_pixels / 121) * 20)) 
+                        print(f"[雷達] 危險點數: {danger_pixels}, 轉換分數: {radar_score}/10")
         except Exception as e:
             print(f"❌ [雷達分析失敗] {e}")
-            radar_verdict = "SAFE"
+            radar_score = 0
 
 # ==================== 修改位置：fetch_weather_job() 內的決策邏輯 ====================
         # 5. 決策邏輯
@@ -154,8 +173,13 @@ def fetch_weather_job():
         elif rain_1hr > 0:
             rain_trend_score += 1
 
-        if radar_verdict == "DANGER":
-            rain_trend_score += 3
+        # 決策邏輯部分
+        # 之前是 if radar_verdict == "DANGER":
+        # 現在改為：
+        if radar_score >= 7:
+            risk_score += 4 # 極高風險
+        elif radar_score >= 4:
+            risk_score += 2 # 中等風險
         if pop >= 80:
             rain_trend_score += 2
         elif pop >= 60:
